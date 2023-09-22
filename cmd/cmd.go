@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+
+	"github.com/harry-hov/gnopls/internal/env"
+	"github.com/harry-hov/gnopls/internal/lsp"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +18,14 @@ func GnoplsCmd() *cobra.Command {
 		SilenceUsage:       true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			slog.Info("Initializing Server...")
+			env := &env.Env{
+				GNOROOT: os.Getenv("GNOROOT"),
+				GNOHOME: env.GnoHome(),
+			}
+			err := lsp.RunServer(cmd.Context(), env)
+			if err != nil {
+				return err
+			}
 
 			return nil
 		},
