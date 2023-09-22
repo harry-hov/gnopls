@@ -20,6 +20,7 @@ func GnoplsCmd() *cobra.Command {
 	}
 
 	cmd.CompletionOptions.DisableDefaultCmd = true
+	cmd.AddCommand(CmdVersion())
 
 	return cmd
 }
