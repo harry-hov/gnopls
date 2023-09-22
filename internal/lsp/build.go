@@ -31,6 +31,7 @@ func (s *server) PrecompileAndBuild(file *GnoFile) ([]ErrorInfo, error) {
 	}
 
 	preOut, _ := tools.Precompile(tmpDir)
+	slog.Info(string(preOut))
 	if len(preOut) > 0 {
 		return parseErrors(file, string(preOut), "precompile")
 	}
@@ -90,6 +91,12 @@ func parseErrors(file *GnoFile, output, cmd string) ([]ErrorInfo, error) {
 // numbers to account for the header information in the generated Go file.
 func findError(file *GnoFile, fname string, line, col int, msg string, tool string) ErrorInfo {
 	msg = strings.TrimSpace(msg)
+	if tool == "precompile" {
+		// fname parsed from precompile result can be incorrect
+		// e.g filename = `filename.gno: precompile: parse: tmp.gno`
+		parts := strings.Split(fname, ":")
+		fname = parts[0]
+	}
 
 	// Error messages are of the form:
 	//
@@ -101,10 +108,13 @@ func findError(file *GnoFile, fname string, line, col int, msg string, tool stri
 	needle := parens.ReplaceAllString(msg, "")
 	tokens := strings.Fields(needle)
 
-	// The generated Go file has 4 lines of header information.
-	//
-	// +1 for zero-indexing.
-	shiftedLine := line - 4
+	shiftedLine := line
+	if tool == "build" {
+		// The generated Go file has 4 lines of header information.
+		//
+		// +1 for zero-indexing.
+		shiftedLine = line - 4
+	}
 
 	errorInfo := ErrorInfo{
 		FileName: strings.TrimPrefix(GoToGnoFileName(filepath.Base(fname)), "."),
