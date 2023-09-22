@@ -132,13 +132,19 @@ func InitCompletionStore(dirs []string) *CompletionStore {
 
 	pkgDirs, err := ListGnoPackages(dirs)
 	if err != nil {
-		panic(err)
+		// Ignore error
+		return &CompletionStore{
+			pkgs: pkgs,
+			time: time.Now(),
+		}
 	}
 
 	for _, p := range pkgDirs {
 		files, err := ListGnoFiles(p)
 		if err != nil {
-			panic(err)
+			// Ignore error
+			// Continue with rest of the packages
+			continue
 		}
 		symbols := []*Symbol{}
 		for _, file := range files {
@@ -167,20 +173,20 @@ func InitCompletionStore(dirs []string) *CompletionStore {
 func getSymbols(fname string) []*Symbol {
 	var symbols []*Symbol
 
-	// Create a FileSet to work with.
-	fset := token.NewFileSet()
-
-	// Parse the file and create an AST.
-	file, err := parser.ParseFile(fset, fname, nil, parser.ParseComments)
-	if err != nil {
-		panic(err)
-	}
-
 	bsrc, err := os.ReadFile(fname)
 	if err != nil {
-		panic(err)
+		// Ignore error and return empty symbol list
+		return symbols
 	}
 	text := string(bsrc)
+
+	// Parse the file and create an AST.
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, fname, nil, parser.ParseComments)
+	if err != nil {
+		// Ignore error and return empty symbol list
+		return symbols
+	}
 
 	// Trim AST to exported declarations only.
 	ast.FileExports(file)
