@@ -20,6 +20,7 @@ type server struct {
 	env  *env.Env
 
 	snapshot        *Snapshot
+	completionStore *CompletionStore
 
 	formatOpt tools.FormattingOption
 }
@@ -36,6 +37,7 @@ func BuildServerHandler(conn jsonrpc2.Conn, env *env.Env) jsonrpc2.Handler {
 		env: env,
 
 		snapshot:        NewSnapshot(),
+		completionStore: InitCompletionStore(dirs),
 
 		formatOpt: tools.Gofumpt,
 	}
@@ -63,6 +65,10 @@ func (s *server) ServerHandler(ctx context.Context, reply jsonrpc2.Replier, req 
 		return s.DidSave(ctx, reply, req)
 	case "textDocument/formatting":
 		return s.Formatting(ctx, reply, req)
+	case "textDocument/hover":
+		return s.Hover(ctx, reply, req)
+	case "textDocument/completion":
+		return s.Completion(ctx, reply, req)
 	default:
 		return jsonrpc2.MethodNotFoundHandler(ctx, reply, req)
 	}
