@@ -36,7 +36,7 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 	slog.Info("hover", "offset", offset)
 	pgf, err := file.ParseGno(ctx)
 	if err != nil {
-		reply(ctx, nil, errors.New("cannot parse gno file"))
+		return reply(ctx, nil, errors.New("cannot parse gno file"))
 	}
 	for _, spec := range pgf.File.Imports {
 		slog.Info("hover", "spec", spec.Path.Value, "pos", spec.Path.Pos(), "end", spec.Path.End())
