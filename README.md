@@ -25,7 +25,7 @@ If you are having issues with `gnopls`, please feel free to open an issue.
 
 Special thanks to [Joseph Kato](https://github.com/jdkato)
 
-As some part of code is copied from [gnols](https://github.com/gno-playground/gnols).
+As some part of code is copied and modified from [gnols](https://github.com/gno-playground/gnols).
 
 [language server]: https://langserver.org
 [LSP]: https://microsoft.github.io/language-server-protocol/
