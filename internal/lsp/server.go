@@ -18,6 +18,9 @@ type server struct {
 	conn jsonrpc2.Conn
 	env  *env.Env
 
+	snapshot        *Snapshot
+
+	formatOpt tools.FormattingOption
 }
 
 func BuildServerHandler(conn jsonrpc2.Conn, env *env.Env) jsonrpc2.Handler {
@@ -31,6 +34,9 @@ func BuildServerHandler(conn jsonrpc2.Conn, env *env.Env) jsonrpc2.Handler {
 
 		env: env,
 
+		snapshot:        NewSnapshot(),
+
+		formatOpt: tools.Gofumpt,
 	}
 
 	return jsonrpc2.ReplyHandler(server.ServerHandler)
@@ -46,6 +52,14 @@ func (s *server) ServerHandler(ctx context.Context, reply jsonrpc2.Replier, req 
 		return s.Initialized(ctx, reply, req)
 	case "shutdown":
 		return s.Shutdown(ctx, reply, req)
+	case "textDocument/didChange":
+		return s.DidChange(ctx, reply, req)
+	case "textDocument/didClose":
+		return s.DidClose(ctx, reply, req)
+	case "textDocument/didOpen":
+		return s.DidOpen(ctx, reply, req)
+	case "textDocument/didSave":
+		return s.DidSave(ctx, reply, req)
 	default:
 		return jsonrpc2.MethodNotFoundHandler(ctx, reply, req)
 	}
