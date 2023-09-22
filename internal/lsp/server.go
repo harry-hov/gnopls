@@ -83,7 +83,7 @@ func (s *server) Initialize(ctx context.Context, reply jsonrpc2.Replier, req jso
 	return reply(ctx, protocol.InitializeResult{
 		ServerInfo: &protocol.ServerInfo{
 			Name:    "gnopls",
-			Version: version.Version,
+			Version: version.GetVersion(ctx),
 		},
 		Capabilities: protocol.ServerCapabilities{
 			TextDocumentSync: protocol.TextDocumentSyncOptions{
