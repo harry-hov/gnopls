@@ -1,0 +1,12 @@
+project_name: gnopls
+builds:
+  - main: .
+    ldflags:
+      - -s -w -X github.com/harry-hov/gnopls/version.Version={{.Tag}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    binary: gnopls
