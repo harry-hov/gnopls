@@ -60,6 +60,8 @@ func (s *server) ServerHandler(ctx context.Context, reply jsonrpc2.Replier, req 
 		return s.DidOpen(ctx, reply, req)
 	case "textDocument/didSave":
 		return s.DidSave(ctx, reply, req)
+	case "textDocument/formatting":
+		return s.Formatting(ctx, reply, req)
 	default:
 		return jsonrpc2.MethodNotFoundHandler(ctx, reply, req)
 	}
