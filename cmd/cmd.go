@@ -1,4 +1,5 @@
 package cmd
+
 import (
 	"fmt"
 	"log/slog"
@@ -20,6 +21,7 @@ func GnoplsCmd() *cobra.Command {
 	}
 
 	cmd.CompletionOptions.DisableDefaultCmd = true
+	cmd.AddCommand(CmdServe())
 	cmd.AddCommand(CmdVersion())
 
 	return cmd
