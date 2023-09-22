@@ -21,3 +21,7 @@ command:
 
 If you are having issues with `gnopls`, please feel free to open an issue.
 
+## Additional information
+
+[language server]: https://langserver.org
+[LSP]: https://microsoft.github.io/language-server-protocol/
