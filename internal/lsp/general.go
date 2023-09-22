@@ -24,7 +24,8 @@ func (s *server) DidOpen(ctx context.Context, reply jsonrpc2.Replier, req jsonrp
 	s.snapshot.file.Set(uri.Filename(), file)
 
 	slog.Info("open " + string(params.TextDocument.URI.Filename()))
-	return reply(ctx, nil, nil)
+	notification := s.publishDiagnostics(ctx, s.conn, file)
+	return reply(ctx, notification, nil)
 }
 
 func (s *server) DidClose(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2.Request) error {
@@ -72,4 +73,6 @@ func (s *server) DidSave(ctx context.Context, reply jsonrpc2.Replier, req jsonrp
 	}
 
 	slog.Info("save " + string(uri.Filename()))
+	notification := s.publishDiagnostics(ctx, s.conn, file)
+	return reply(ctx, notification, nil)
 }

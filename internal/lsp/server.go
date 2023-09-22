@@ -11,6 +11,7 @@ import (
 	"go.lsp.dev/protocol"
 
 	"github.com/harry-hov/gnopls/internal/env"
+	"github.com/harry-hov/gnopls/internal/tools"
 	"github.com/harry-hov/gnopls/internal/version"
 )
 
