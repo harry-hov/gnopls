@@ -36,5 +36,9 @@ func GetVersion(ctx context.Context) string {
 		return Version
 	}
 
+	if Version == versionUnknown {
+		return versionUnknown
+	}
+
 	return tag
 }
