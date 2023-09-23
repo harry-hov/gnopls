@@ -2,13 +2,14 @@ package version
 
 import (
 	"context"
+	"strings"
 
 	"github.com/google/go-github/github"
 )
 
-const versionUnknown = "v0.0.0-unknown"
+const versionLocal = "local"
 
-var Version string = versionUnknown
+var Version = versionLocal
 
 func getLatestReleaseTag(ctx context.Context) (string, error) {
 	latest, _, err := github.
@@ -27,7 +28,7 @@ func getLatestReleaseTag(ctx context.Context) (string, error) {
 }
 
 func GetVersion(ctx context.Context) string {
-	if Version != versionUnknown {
+	if Version != versionLocal {
 		return Version
 	}
 
@@ -36,8 +37,9 @@ func GetVersion(ctx context.Context) string {
 		return Version
 	}
 
-	if Version == versionUnknown {
-		return versionUnknown
+	if Version == versionLocal {
+		parts := strings.Split(tag, "-")
+		return parts[0] + "-" + versionLocal
 	}
 
 	return tag
