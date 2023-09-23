@@ -7,5 +7,5 @@ import (
 
 // Precompile a Gno package: gno precompile <dir>.
 func Precompile(rootDir string) ([]byte, error) {
-	return exec.Command("gno", "precompile", filepath.Join(rootDir)).CombinedOutput()
+	return exec.Command("gno", "precompile", "-skip-imports", filepath.Join(rootDir)).CombinedOutput()
 }
