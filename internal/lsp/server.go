@@ -69,6 +69,8 @@ func (s *server) ServerHandler(ctx context.Context, reply jsonrpc2.Replier, req 
 		return s.Hover(ctx, reply, req)
 	case "textDocument/completion":
 		return s.Completion(ctx, reply, req)
+	case "textDocument/definition":
+		return s.Definition(ctx, reply, req)
 	default:
 		return jsonrpc2.MethodNotFoundHandler(ctx, reply, req)
 	}
@@ -103,6 +105,7 @@ func (s *server) Initialize(ctx context.Context, reply jsonrpc2.Replier, req jso
 					"gnopls.version",
 				},
 			},
+			DefinitionProvider:         true,
 			DocumentFormattingProvider: true,
 		},
 	}, nil)

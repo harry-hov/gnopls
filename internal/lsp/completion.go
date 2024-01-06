@@ -16,6 +16,7 @@ import (
 
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
+	"go.lsp.dev/uri"
 )
 
 type CompletionStore struct {
@@ -69,6 +70,8 @@ type Package struct {
 }
 
 type Symbol struct {
+	Position  token.Position
+	FileURI   uri.URI
 	Name      string
 	Doc       string
 	Signature string
@@ -172,11 +175,13 @@ func InitCompletionStore(dirs []string) *CompletionStore {
 
 func getSymbols(fname string) []*Symbol {
 	var symbols []*Symbol
-
-	bsrc, err := os.ReadFile(fname)
+	absPath, err := filepath.Abs(fname)
 	if err != nil {
-		// Ignore error and return empty symbol list
-		return symbols
+		return symbols // Ignore error and return empty symbol list
+	}
+	bsrc, err := os.ReadFile(absPath)
+	if err != nil {
+		return symbols // Ignore error and return empty symbol list
 	}
 	text := string(bsrc)
 
@@ -192,17 +197,19 @@ func getSymbols(fname string) []*Symbol {
 	ast.FileExports(file)
 
 	ast.Inspect(file, func(n ast.Node) bool {
-		var found *Symbol
+		var symbol *Symbol
 
 		switch n.(type) {
 		case *ast.FuncDecl:
-			found = function(n, text)
+			symbol = function(n, text)
 		case *ast.GenDecl:
-			found = declaration(n, text)
+			symbol = declaration(n, text)
 		}
 
-		if found != nil {
-			symbols = append(symbols, found)
+		if symbol != nil {
+			symbol.FileURI = getURI(absPath)
+			symbol.Position = fset.Position(n.Pos())
+			symbols = append(symbols, symbol)
 		}
 
 		return true
@@ -254,4 +261,8 @@ func typeName(t ast.TypeSpec) string {
 	default:
 		return "type"
 	}
+}
+
+func getURI(absFilePath string) uri.URI {
+	return uri.URI("file://" + absFilePath)
 }
