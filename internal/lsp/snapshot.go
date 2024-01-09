@@ -41,6 +41,7 @@ type GnoFile struct {
 type ParsedGnoFile struct {
 	URI  protocol.DocumentURI
 	File *ast.File
+	Fset *token.FileSet
 
 	Src []byte
 }
@@ -56,6 +57,7 @@ func (f *GnoFile) ParseGno(ctx context.Context) (*ParsedGnoFile, error) {
 		URI: f.URI,
 
 		File: ast,
+		Fset: fset,
 		Src:  f.Src,
 	}
 
@@ -95,7 +97,7 @@ func (f *GnoFile) TokenAt(pos protocol.Position) (*HoveredToken, error) {
 	}
 
 	end := index
-	slog.Info(fmt.Sprintf("end: %d", end))
+	slog.Info(fmt.Sprintf("curser at: %d", end))
 	for end < lineLen && line[end] != ' ' {
 		end++
 	}
