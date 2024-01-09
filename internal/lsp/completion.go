@@ -111,8 +111,13 @@ func (s *server) Completion(ctx context.Context, reply jsonrpc2.Replier, req jso
 	if pkg != nil {
 		for _, s := range pkg.Symbols {
 			items = append(items, protocol.CompletionItem{
-				Label:         s.Name,
-				InsertText:    s.Name,
+				Label: s.Name,
+				InsertText: func() string {
+					if s.Kind == "func" {
+						return s.Name + "()"
+					}
+					return s.Name
+				}(),
 				Kind:          symbolToKind(s.Kind),
 				Detail:        s.Signature,
 				Documentation: s.Doc,
