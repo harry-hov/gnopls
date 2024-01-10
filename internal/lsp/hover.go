@@ -116,6 +116,21 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 		if !ok {
 			return reply(ctx, nil, nil)
 		}
+		if i.Obj != nil { // its a var
+			if offset >= int(i.Pos())-1 && offset < int(i.End())-1 {
+				return reply(ctx, protocol.Hover{
+					Contents: protocol.MarkupContent{
+						Kind:  protocol.Markdown,
+						Value: fmt.Sprintf("```gno\n%s %s\n```", i.Obj.Kind, i.Obj.Name),
+					},
+					Range: posToRange(
+						int(params.Position.Line),
+						[]int{int(i.Pos()), int(i.End())},
+					),
+				}, nil)
+			}
+			return reply(ctx, nil, nil)
+		}
 		if offset >= int(i.Pos())-1 && offset < int(i.End())-1 { // X
 			for _, spec := range pgf.File.Imports {
 				// remove leading and trailing `"`
