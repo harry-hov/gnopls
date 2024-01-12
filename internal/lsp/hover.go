@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"go/ast"
 	"log/slog"
+	"path/filepath"
 	"strings"
 
 	"go.lsp.dev/jsonrpc2"
@@ -57,7 +58,22 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 		slog.Info("hover - CALL_EXPR")
 		switch v := e.Fun.(type) {
 		case *ast.Ident:
-			// TODO: is a func? handle.
+			// TODO: don't show methods
+			pkgPath := filepath.Dir(params.TextDocument.URI.Filename())
+			sym, ok := s.cache.lookupSymbol(pkgPath, v.Name)
+			if !ok {
+				return reply(ctx, nil, nil)
+			}
+			return reply(ctx, protocol.Hover{
+				Contents: protocol.MarkupContent{
+					Kind:  protocol.Markdown,
+					Value: sym.String(),
+				},
+				Range: posToRange(
+					int(params.Position.Line),
+					[]int{0, 4},
+				),
+			}, nil)
 		case *ast.SelectorExpr:
 			// case pkg.Func
 			i, ok := v.X.(*ast.Ident)

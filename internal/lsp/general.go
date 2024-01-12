@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"path/filepath"
 
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
@@ -24,6 +25,7 @@ func (s *server) DidOpen(ctx context.Context, reply jsonrpc2.Replier, req jsonrp
 	s.snapshot.file.Set(uri.Filename(), file)
 
 	slog.Info("open " + string(params.TextDocument.URI.Filename()))
+	s.UpdateCache(filepath.Dir(string(params.TextDocument.URI.Filename())))
 	notification := s.publishDiagnostics(ctx, s.conn, file)
 	return reply(ctx, notification, nil)
 }

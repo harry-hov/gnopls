@@ -21,6 +21,7 @@ type server struct {
 
 	snapshot        *Snapshot
 	completionStore *CompletionStore
+	cache           *Cache
 
 	formatOpt tools.FormattingOption
 }
@@ -38,6 +39,7 @@ func BuildServerHandler(conn jsonrpc2.Conn, env *env.Env) jsonrpc2.Handler {
 
 		snapshot:        NewSnapshot(),
 		completionStore: InitCompletionStore(dirs),
+		cache:           NewCache(),
 
 		formatOpt: tools.Gofumpt,
 	}
