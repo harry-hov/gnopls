@@ -154,7 +154,7 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 				parts := strings.Split(path, "/")
 				last := parts[len(parts)-1]
 				if last == i.Name {
-					header := fmt.Sprintf("```gno\npackage %s (%s)\n```\n\n", last, spec.Path.Value)
+					header := fmt.Sprintf("package %s (%s)", last, spec.Path.Value)
 					body := func() string {
 						if strings.HasPrefix(path, "gno.land/") {
 							return fmt.Sprintf("[```%s``` on gno.land](https://%s)", last, path)
@@ -164,7 +164,7 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 					return reply(ctx, protocol.Hover{
 						Contents: protocol.MarkupContent{
 							Kind:  protocol.Markdown,
-							Value: header + body,
+							Value: FormatHoverContent(header, body),
 						},
 						Range: posToRange(
 							int(params.Position.Line),
@@ -195,6 +195,10 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 	}
 
 	return reply(ctx, nil, nil)
+}
+
+func FormatHoverContent(header, body string) string {
+	return fmt.Sprintf("```gno\n%s\n```\n\n%s", header, body)
 }
 
 // handleSelectorExpr returns jsonrpc2.Replier for Hover
