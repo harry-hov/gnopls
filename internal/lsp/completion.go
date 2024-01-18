@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
+	cmap "github.com/orcaman/concurrent-map/v2"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
@@ -67,6 +69,9 @@ type Package struct {
 	Name       string
 	ImportPath string
 	Symbols    []*Symbol
+
+	Functions []*Function
+	Methods   cmap.ConcurrentMap[string, []*Method]
 }
 
 type Symbol struct {
@@ -76,6 +81,46 @@ type Symbol struct {
 	Doc       string
 	Signature string
 	Kind      string
+}
+
+type Function struct {
+	Position  token.Position
+	FileURI   uri.URI
+	Name      string
+	Arguments []*Argument
+	Doc       string
+	Signature string
+	Kind      string
+}
+
+func (f *Function) IsExported() bool {
+	if len(f.Name) == 0 {
+		return false // empty string
+	}
+	return unicode.IsUpper([]rune(f.Name)[0])
+}
+
+type Method struct {
+	Position  token.Position
+	FileURI   uri.URI
+	Name      string
+	Arguments []*Argument
+	Doc       string
+	Signature string
+	Kind      string
+}
+
+func (f *Method) IsExported() bool {
+	if len(f.Name) == 0 {
+		return false // empty string
+	}
+	return unicode.IsUpper([]rune(f.Name)[0])
+}
+
+type Argument struct {
+	Position token.Position
+	Name     string
+	Kind     string
 }
 
 func (s Symbol) String() string {
@@ -176,6 +221,103 @@ func InitCompletionStore(dirs []string) *CompletionStore {
 		pkgs: pkgs,
 		time: time.Now(),
 	}
+}
+
+func PackageFromDir(path string, onlyExports bool) (*Package, error) {
+	files, err := ListGnoFiles(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var symbols []*Symbol
+	var functions []*Function
+	methods := cmap.New[[]*Method]()
+	for _, fname := range files {
+		absPath, err := filepath.Abs(fname)
+		if err != nil {
+			return nil, err
+		}
+		bsrc, err := os.ReadFile(absPath)
+		if err != nil {
+			return nil, err
+		}
+		text := string(bsrc)
+		// Parse the file and create an AST.
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, fname, text, parser.ParseComments)
+		if err != nil {
+			return nil, err
+		}
+		if onlyExports { // Trim AST to exported declarations only.
+			ast.FileExports(file)
+		}
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			var symbol *Symbol
+
+			switch t := n.(type) {
+			case *ast.FuncDecl:
+				if t.Recv != nil { // method
+					if t.Recv.NumFields() > 0 && t.Recv.List[0].Type != nil {
+						switch rt := t.Recv.List[0].Type.(type) {
+						case *ast.StarExpr:
+							k := fmt.Sprintf("*%s", rt.X)
+							m := &Method{
+								Position:  fset.Position(t.Pos()),
+								FileURI:   getURI(absPath),
+								Name:      t.Name.Name,
+								Arguments: []*Argument{}, // TODO: fill args
+								Doc:       t.Doc.Text(),
+								Signature: strings.Split(text[t.Pos()-1:t.End()-1], " {")[0], // TODO: use ast
+								Kind:      "func",
+							}
+							if v, ok := methods.Get(k); ok {
+								v = append(v, m)
+								methods.Set(k, v)
+							} else {
+								methods.Set(k, []*Method{m})
+							}
+						case *ast.Ident:
+							k := fmt.Sprintf("%s", rt.Name)
+							m := &Method{
+								Position:  fset.Position(t.Pos()),
+								FileURI:   getURI(absPath),
+								Name:      t.Name.Name,
+								Arguments: []*Argument{}, // TODO: fill args
+								Doc:       t.Doc.Text(),
+								Signature: strings.Split(text[t.Pos()-1:t.End()-1], " {")[0], // TODO: use ast
+								Kind:      "func",
+							}
+							if v, ok := methods.Get(k); ok {
+								v = append(v, m)
+								methods.Set(k, v)
+							} else {
+								methods.Set(k, []*Method{m})
+							}
+						}
+					}
+				}
+				symbol = function(n, text)
+			case *ast.GenDecl:
+				symbol = declaration(n, text)
+			}
+
+			if symbol != nil {
+				symbol.FileURI = getURI(absPath)
+				symbol.Position = fset.Position(n.Pos())
+				symbols = append(symbols, symbol)
+			}
+
+			return true
+		})
+	}
+	return &Package{
+		Name:       filepath.Base(path), // TODO: use package clause
+		ImportPath: "",                  // TODO: use gno.mod
+		Symbols:    symbols,
+		Functions:  functions,
+		Methods:    methods,
+	}, nil
 }
 
 func getSymbols(fname string) []*Symbol {

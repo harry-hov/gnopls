@@ -29,18 +29,9 @@ func NewCache() *Cache {
 }
 
 func (s *server) UpdateCache(pkgPath string) {
-	files, err := ListGnoFiles(pkgPath)
+	pkg, err := PackageFromDir(pkgPath, false)
 	if err != nil {
-		// Ignore error
-		return
+		panic(err)
 	}
-	symbols := []*Symbol{}
-	for _, file := range files {
-		symbols = append(symbols, getSymbols(file)...)
-	}
-	s.cache.pkgs.Set(pkgPath, &Package{
-		Name:       pkgPath,
-		ImportPath: "",
-		Symbols:    symbols,
-	})
+	s.cache.pkgs.Set(pkgPath, pkg)
 }
