@@ -80,8 +80,104 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 			if !ok {
 				return reply(ctx, nil, nil)
 			}
-			if offset >= int(i.Pos())-1 && offset < int(i.End())-1 { // pkg
-				for _, spec := range pgf.File.Imports {
+
+			if offset >= int(i.Pos())-1 && offset < int(i.End())-1 { // pkg or var
+				if i.Obj != nil { // var
+					switch u := i.Obj.Decl.(type) {
+					case *ast.Field:
+						if u.Type != nil {
+							switch t := u.Type.(type) {
+							case *ast.StarExpr:
+								header := fmt.Sprintf("%s %s *%s", i.Obj.Kind, u.Names[0], t.X)
+								return reply(ctx, protocol.Hover{
+									Contents: protocol.MarkupContent{
+										Kind:  protocol.Markdown,
+										Value: FormatHoverContent(header, ""),
+									},
+									Range: posToRange(
+										int(params.Position.Line),
+										[]int{int(i.Pos()), int(i.End())},
+									),
+								}, nil)
+							case *ast.Ident:
+								header := fmt.Sprintf("%s %s %s", i.Obj.Kind, u.Names[0], t.Name)
+								return reply(ctx, protocol.Hover{
+									Contents: protocol.MarkupContent{
+										Kind:  protocol.Markdown,
+										Value: FormatHoverContent(header, ""),
+									},
+									Range: posToRange(
+										int(params.Position.Line),
+										[]int{int(i.Pos()), int(i.End())},
+									),
+								}, nil)
+							}
+						}
+					case *ast.TypeSpec:
+						if u.Type != nil {
+							switch t := u.Type.(type) {
+							case *ast.StarExpr:
+								header := fmt.Sprintf("%s %s *%s", i.Obj.Kind, u.Name, t.X)
+								return reply(ctx, protocol.Hover{
+									Contents: protocol.MarkupContent{
+										Kind:  protocol.Markdown,
+										Value: FormatHoverContent(header, ""),
+									},
+									Range: posToRange(
+										int(params.Position.Line),
+										[]int{int(i.Pos()), int(i.End())},
+									),
+								}, nil)
+							case *ast.Ident:
+								header := fmt.Sprintf("%s %s %s", i.Obj.Kind, u.Name, t.Name)
+								return reply(ctx, protocol.Hover{
+									Contents: protocol.MarkupContent{
+										Kind:  protocol.Markdown,
+										Value: FormatHoverContent(header, ""),
+									},
+									Range: posToRange(
+										int(params.Position.Line),
+										[]int{int(i.Pos()), int(i.End())},
+									),
+								}, nil)
+							}
+						}
+					case *ast.ValueSpec:
+						if u.Type != nil {
+							switch t := u.Type.(type) {
+							case *ast.StarExpr:
+								header := fmt.Sprintf("%s %s *%s", i.Obj.Kind, u.Names[0], t.X)
+								return reply(ctx, protocol.Hover{
+									Contents: protocol.MarkupContent{
+										Kind:  protocol.Markdown,
+										Value: FormatHoverContent(header, ""),
+									},
+									Range: posToRange(
+										int(params.Position.Line),
+										[]int{int(i.Pos()), int(i.End())},
+									),
+								}, nil)
+							case *ast.Ident:
+								header := fmt.Sprintf("%s %s %s", i.Obj.Kind, u.Names[0], t.Name)
+								return reply(ctx, protocol.Hover{
+									Contents: protocol.MarkupContent{
+										Kind:  protocol.Markdown,
+										Value: FormatHoverContent(header, ""),
+									},
+									Range: posToRange(
+										int(params.Position.Line),
+										[]int{int(i.Pos()), int(i.End())},
+									),
+								}, nil)
+							}
+						}
+					default:
+						slog.Info("hover", "NOT HANDLED", u)
+					}
+					return reply(ctx, nil, nil)
+				}
+
+				for _, spec := range pgf.File.Imports { // pkg
 					// remove leading and trailing `"`
 					path := spec.Path.Value[1 : len(spec.Path.Value)-1]
 					parts := strings.Split(path, "/")
@@ -189,9 +285,70 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 			}
 		}
 		// slog.Info("SELECTOR_EXPR", "name", e.Sel.Name, "obj", e.Sel.String())
+	case *ast.FuncType:
+		var funcDecl *ast.FuncDecl
+		ast.Inspect(pgf.File, func(n ast.Node) bool {
+			if f, ok := n.(*ast.FuncDecl); ok && f.Type == e {
+				funcDecl = f
+				return false
+			}
+			return true
+		})
+		if funcDecl == nil {
+			return reply(ctx, nil, nil)
+		}
+		if funcDecl.Recv != nil {
+			// slog.Info("FUNC-TYPE", "pos", funcDecl.Recv.List[0].Type.Pos(), "end", funcDecl.Recv.List[0].Type.End())
+			if offset >= int(funcDecl.Recv.List[0].Type.Pos())-1 && offset < int(funcDecl.Recv.List[0].Type.End())-1 {
+				switch t := funcDecl.Recv.List[0].Type.(type) {
+				case *ast.StarExpr:
+					k := fmt.Sprintf("*%s", t.X)
+					pkg, ok := s.cache.pkgs.Get(filepath.Dir(string(params.TextDocument.URI.Filename())))
+					if !ok {
+						return reply(ctx, nil, nil)
+					}
+					methods, ok := pkg.Methods.Get(k)
+					if !ok {
+						return reply(ctx, nil, nil)
+					}
+					body := func() string { // TODO: sort
+						out := "```gno\n"
+						for _, m := range methods {
+							if m.IsExported() {
+								out += fmt.Sprintf("%s\n", m.Signature)
+							}
+						}
+						out += "```"
+						return out
+					}()
+					// TODO: look for structure/type as well for header
+					return reply(ctx, protocol.Hover{
+						Contents: protocol.MarkupContent{
+							Kind:  protocol.Markdown,
+							Value: FormatHoverContent(k, body),
+						},
+						Range: posToRange(
+							int(params.Position.Line),
+							[]int{int(t.Pos()), int(t.End())},
+						),
+					}, nil)
+				case *ast.Ident:
+					header := fmt.Sprintf("var %s", t.Name)
+					return reply(ctx, protocol.Hover{
+						Contents: protocol.MarkupContent{
+							Kind:  protocol.Markdown,
+							Value: FormatHoverContent(header, ""),
+						},
+						Range: posToRange(
+							int(params.Position.Line),
+							[]int{int(t.Pos()), int(t.End())},
+						),
+					}, nil)
+				}
+			}
+		}
 	default:
 		slog.Info("hover - NOT HANDLED")
-		return reply(ctx, nil, nil)
 	}
 
 	return reply(ctx, nil, nil)
