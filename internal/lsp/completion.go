@@ -194,28 +194,11 @@ func InitCompletionStore(dirs []string) *CompletionStore {
 	}
 
 	for _, p := range pkgDirs {
-		files, err := ListGnoFiles(p)
+		pkg, err := PackageFromDir(p, false)
 		if err != nil {
-			// Ignore error
-			// Continue with rest of the packages
 			continue
 		}
-		symbols := []*Symbol{}
-		for _, file := range files {
-			symbols = append(symbols, getSymbols(file)...)
-		}
-		// convert to import path:
-		// get path relative to dir, and convert separators to slashes.
-		ip := strings.ReplaceAll(
-			strings.TrimPrefix(p, p+string(filepath.Separator)),
-			string(filepath.Separator), "/",
-		)
-
-		pkgs = append(pkgs, &Package{
-			Name:       filepath.Base(p),
-			ImportPath: ip,
-			Symbols:    symbols,
-		})
+		pkgs = append(pkgs, pkg)
 	}
 
 	return &CompletionStore{
