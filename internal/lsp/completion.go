@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"log/slog"
@@ -71,8 +72,9 @@ type Package struct {
 	ImportPath string
 	Symbols    []*Symbol
 
-	Functions []*Function
-	Methods   cmap.ConcurrentMap[string, []*Method]
+	Functions  []*Function
+	Methods    cmap.ConcurrentMap[string, []*Method]
+	Structures []*Structure
 }
 
 type Symbol struct {
@@ -88,7 +90,7 @@ type Function struct {
 	Position  token.Position
 	FileURI   uri.URI
 	Name      string
-	Arguments []*Argument
+	Arguments []*Field
 	Doc       string
 	Signature string
 	Kind      string
@@ -105,7 +107,7 @@ type Method struct {
 	Position  token.Position
 	FileURI   uri.URI
 	Name      string
-	Arguments []*Argument
+	Arguments []*Field
 	Doc       string
 	Signature string
 	Kind      string
@@ -118,7 +120,16 @@ func (f *Method) IsExported() bool {
 	return unicode.IsUpper([]rune(f.Name)[0])
 }
 
-type Argument struct {
+type Structure struct {
+	Position token.Position
+	FileURI  uri.URI
+	Name     string
+	Fields   []*Field
+	Doc      string
+	String   string
+}
+
+type Field struct {
 	Position token.Position
 	Name     string
 	Kind     string
@@ -217,6 +228,7 @@ func PackageFromDir(path string, onlyExports bool) (*Package, error) {
 
 	var symbols []*Symbol
 	var functions []*Function
+	var structures []*Structure
 	var packageName string
 	methods := cmap.New[[]*Method]()
 	for _, fname := range files {
@@ -258,7 +270,7 @@ func PackageFromDir(path string, onlyExports bool) (*Package, error) {
 								Position:  fset.Position(t.Pos()),
 								FileURI:   getURI(absPath),
 								Name:      t.Name.Name,
-								Arguments: []*Argument{}, // TODO: fill args
+								Arguments: []*Field{}, // TODO: fill args
 								Doc:       t.Doc.Text(),
 								Signature: strings.Split(text[t.Pos()-1:t.End()-1], " {")[0], // TODO: use ast
 								Kind:      "func",
@@ -275,7 +287,7 @@ func PackageFromDir(path string, onlyExports bool) (*Package, error) {
 								Position:  fset.Position(t.Pos()),
 								FileURI:   getURI(absPath),
 								Name:      t.Name.Name,
-								Arguments: []*Argument{}, // TODO: fill args
+								Arguments: []*Field{}, // TODO: fill args
 								Doc:       t.Doc.Text(),
 								Signature: strings.Split(text[t.Pos()-1:t.End()-1], " {")[0], // TODO: use ast
 								Kind:      "func",
@@ -291,6 +303,24 @@ func PackageFromDir(path string, onlyExports bool) (*Package, error) {
 				}
 				symbol = function(n, text)
 			case *ast.GenDecl:
+				for _, spec := range t.Specs {
+					switch s := spec.(type) {
+					case *ast.TypeSpec:
+						switch tt := s.Type.(type) {
+						case *ast.StructType:
+							buf := new(strings.Builder)
+							format.Node(buf, fset, tt)
+							structures = append(structures, &Structure{
+								Position: fset.Position(tt.Pos()),
+								FileURI:  getURI(absPath),
+								Name:     s.Name.Name,
+								Fields:   []*Field{}, // TODO: fill fields
+								Doc:      t.Doc.Text(),
+								String:   buf.String(),
+							})
+						}
+					}
+				}
 				symbol = declaration(n, text)
 			}
 
@@ -311,9 +341,10 @@ func PackageFromDir(path string, onlyExports bool) (*Package, error) {
 			}
 			return gm.Module.Mod.Path
 		}(),
-		Symbols:   symbols,
-		Functions: functions,
-		Methods:   methods,
+		Symbols:    symbols,
+		Functions:  functions,
+		Methods:    methods,
+		Structures: structures,
 	}, nil
 }
 

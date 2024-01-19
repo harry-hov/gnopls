@@ -307,25 +307,33 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 					if !ok {
 						return reply(ctx, nil, nil)
 					}
-					methods, ok := pkg.Methods.Get(k)
-					if !ok {
+					var structure *Structure
+					for _, st := range pkg.Structures {
+						if st.Name == fmt.Sprintf("%s", t.X) {
+							structure = st
+							break
+						}
+					}
+					if structure == nil {
 						return reply(ctx, nil, nil)
 					}
-					body := func() string { // TODO: sort
-						out := "```gno\n"
+					var header, body string
+					header = fmt.Sprintf("type %s %s\n\n", structure.Name, structure.String)
+					methods, ok := pkg.Methods.Get(k)
+					if ok {
+						body = "```gno\n"
 						for _, m := range methods {
 							if m.IsExported() {
-								out += fmt.Sprintf("%s\n", m.Signature)
+								body += fmt.Sprintf("%s\n", m.Signature)
 							}
 						}
-						out += "```"
-						return out
-					}()
-					// TODO: look for structure/type as well for header
+						body += "```\n"
+						body += structure.Doc + "\n"
+					}
 					return reply(ctx, protocol.Hover{
 						Contents: protocol.MarkupContent{
 							Kind:  protocol.Markdown,
-							Value: FormatHoverContent(k, body),
+							Value: FormatHoverContent(header, body),
 						},
 						Range: posToRange(
 							int(params.Position.Line),
