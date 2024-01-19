@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/gnolang/gno/gnovm/pkg/gnomod"
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
@@ -229,10 +230,17 @@ func PackageFromDir(path string, onlyExports bool) (*Package, error) {
 		return nil, err
 	}
 
+	gm, gmErr := gnomod.ParseAt(path)
+
 	var symbols []*Symbol
 	var functions []*Function
+	var packageName string
 	methods := cmap.New[[]*Method]()
 	for _, fname := range files {
+		if strings.HasSuffix(fname, "_test.gno") ||
+			strings.HasSuffix(fname, "_filetest.gno") {
+			continue
+		}
 		absPath, err := filepath.Abs(fname)
 		if err != nil {
 			return nil, err
@@ -252,6 +260,7 @@ func PackageFromDir(path string, onlyExports bool) (*Package, error) {
 			ast.FileExports(file)
 		}
 
+		packageName = file.Name.Name
 		ast.Inspect(file, func(n ast.Node) bool {
 			var symbol *Symbol
 
@@ -312,11 +321,16 @@ func PackageFromDir(path string, onlyExports bool) (*Package, error) {
 		})
 	}
 	return &Package{
-		Name:       filepath.Base(path), // TODO: use package clause
-		ImportPath: "",                  // TODO: use gno.mod
-		Symbols:    symbols,
-		Functions:  functions,
-		Methods:    methods,
+		Name: packageName,
+		ImportPath: func() string {
+			if gmErr != nil {
+				return packageName
+			}
+			return gm.Module.Mod.Path
+		}(),
+		Symbols:   symbols,
+		Functions: functions,
+		Methods:   methods,
 	}, nil
 }
 
