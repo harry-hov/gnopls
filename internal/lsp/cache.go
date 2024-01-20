@@ -30,8 +30,7 @@ func NewCache() *Cache {
 
 func (s *server) UpdateCache(pkgPath string) {
 	pkg, err := PackageFromDir(pkgPath, false)
-	if err != nil {
-		panic(err)
+	if err == nil {
+		s.cache.pkgs.Set(pkgPath, pkg)
 	}
-	s.cache.pkgs.Set(pkgPath, pkg)
 }
