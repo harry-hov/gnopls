@@ -21,7 +21,7 @@ type HoveredToken struct {
 }
 
 func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2.Request) error {
-	var params protocol.DefinitionParams
+	var params protocol.HoverParams
 	if err := json.Unmarshal(req.Params(), &params); err != nil {
 		return sendParseError(ctx, reply, err)
 	}
