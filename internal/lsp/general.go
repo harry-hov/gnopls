@@ -75,6 +75,7 @@ func (s *server) DidSave(ctx context.Context, reply jsonrpc2.Replier, req jsonrp
 	}
 
 	slog.Info("save " + string(uri.Filename()))
+	s.UpdateCache(filepath.Dir(string(params.TextDocument.URI.Filename())))
 	notification := s.publishDiagnostics(ctx, s.conn, file)
 	return reply(ctx, notification, nil)
 }
