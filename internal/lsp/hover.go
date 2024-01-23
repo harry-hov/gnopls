@@ -83,125 +83,9 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 
 			if offset >= int(i.Pos())-1 && offset < int(i.End())-1 { // pkg or var
 				if i.Obj != nil { // var
-					switch u := i.Obj.Decl.(type) {
-					case *ast.Field:
-						if u.Type != nil {
-							switch t := u.Type.(type) {
-							case *ast.StarExpr:
-								header := fmt.Sprintf("%s %s *%s", i.Obj.Kind, u.Names[0], t.X)
-								return reply(ctx, protocol.Hover{
-									Contents: protocol.MarkupContent{
-										Kind:  protocol.Markdown,
-										Value: FormatHoverContent(header, ""),
-									},
-									Range: posToRange(
-										int(params.Position.Line),
-										[]int{int(i.Pos()), int(i.End())},
-									),
-								}, nil)
-							case *ast.Ident:
-								header := fmt.Sprintf("%s %s %s", i.Obj.Kind, u.Names[0], t.Name)
-								return reply(ctx, protocol.Hover{
-									Contents: protocol.MarkupContent{
-										Kind:  protocol.Markdown,
-										Value: FormatHoverContent(header, ""),
-									},
-									Range: posToRange(
-										int(params.Position.Line),
-										[]int{int(i.Pos()), int(i.End())},
-									),
-								}, nil)
-							}
-						}
-					case *ast.TypeSpec:
-						if u.Type != nil {
-							switch t := u.Type.(type) {
-							case *ast.StarExpr:
-								header := fmt.Sprintf("%s %s *%s", i.Obj.Kind, u.Name, t.X)
-								return reply(ctx, protocol.Hover{
-									Contents: protocol.MarkupContent{
-										Kind:  protocol.Markdown,
-										Value: FormatHoverContent(header, ""),
-									},
-									Range: posToRange(
-										int(params.Position.Line),
-										[]int{int(i.Pos()), int(i.End())},
-									),
-								}, nil)
-							case *ast.Ident:
-								header := fmt.Sprintf("%s %s %s", i.Obj.Kind, u.Name, t.Name)
-								return reply(ctx, protocol.Hover{
-									Contents: protocol.MarkupContent{
-										Kind:  protocol.Markdown,
-										Value: FormatHoverContent(header, ""),
-									},
-									Range: posToRange(
-										int(params.Position.Line),
-										[]int{int(i.Pos()), int(i.End())},
-									),
-								}, nil)
-							}
-						}
-					case *ast.ValueSpec:
-						if u.Type != nil {
-							switch t := u.Type.(type) {
-							case *ast.StarExpr:
-								header := fmt.Sprintf("%s %s *%s", i.Obj.Kind, u.Names[0], t.X)
-								return reply(ctx, protocol.Hover{
-									Contents: protocol.MarkupContent{
-										Kind:  protocol.Markdown,
-										Value: FormatHoverContent(header, ""),
-									},
-									Range: posToRange(
-										int(params.Position.Line),
-										[]int{int(i.Pos()), int(i.End())},
-									),
-								}, nil)
-							case *ast.Ident:
-								header := fmt.Sprintf("%s %s %s", i.Obj.Kind, u.Names[0], t.Name)
-								return reply(ctx, protocol.Hover{
-									Contents: protocol.MarkupContent{
-										Kind:  protocol.Markdown,
-										Value: FormatHoverContent(header, ""),
-									},
-									Range: posToRange(
-										int(params.Position.Line),
-										[]int{int(i.Pos()), int(i.End())},
-									),
-								}, nil)
-							}
-						}
-					default:
-						slog.Info("hover", "NOT HANDLED", u)
-					}
-					return reply(ctx, nil, nil)
+					return s.hoverVariableIdent(ctx, reply, pgf, params, i)
 				}
-
-				for _, spec := range pgf.File.Imports { // pkg
-					// remove leading and trailing `"`
-					path := spec.Path.Value[1 : len(spec.Path.Value)-1]
-					parts := strings.Split(path, "/")
-					last := parts[len(parts)-1]
-					if last == i.Name {
-						header := fmt.Sprintf("```gno\npackage %s (%s)\n```\n\n", last, spec.Path.Value)
-						body := func() string {
-							if strings.HasPrefix(path, "gno.land/") {
-								return fmt.Sprintf("[```%s``` on gno.land](https://%s)", last, path)
-							}
-							return fmt.Sprintf("[```%s``` on gno.land](https://gno.land)", last)
-						}()
-						return reply(ctx, protocol.Hover{
-							Contents: protocol.MarkupContent{
-								Kind:  protocol.Markdown,
-								Value: header + body,
-							},
-							Range: posToRange(
-								int(params.Position.Line),
-								[]int{int(i.Pos()), int(i.End())},
-							),
-						}, nil)
-					}
-				}
+				return s.hoverPackageIdent(ctx, reply, pgf, params, i)
 			} else if offset >= int(e.Pos())-1 && offset < int(e.End())-1 { // Func
 				symbol := s.completionStore.lookupSymbol(i.Name, v.Sel.Name)
 				if symbol != nil {
@@ -229,46 +113,10 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 			return reply(ctx, nil, nil)
 		}
 		if i.Obj != nil { // its a var
-			if offset >= int(i.Pos())-1 && offset < int(i.End())-1 {
-				return reply(ctx, protocol.Hover{
-					Contents: protocol.MarkupContent{
-						Kind:  protocol.Markdown,
-						Value: fmt.Sprintf("```gno\n%s %s\n```", i.Obj.Kind, i.Obj.Name),
-					},
-					Range: posToRange(
-						int(params.Position.Line),
-						[]int{int(i.Pos()), int(i.End())},
-					),
-				}, nil)
-			}
-			return reply(ctx, nil, nil)
+			return s.hoverVariableIdent(ctx, reply, pgf, params, i)
 		}
 		if offset >= int(i.Pos())-1 && offset < int(i.End())-1 { // X
-			for _, spec := range pgf.File.Imports {
-				// remove leading and trailing `"`
-				path := spec.Path.Value[1 : len(spec.Path.Value)-1]
-				parts := strings.Split(path, "/")
-				last := parts[len(parts)-1]
-				if last == i.Name {
-					header := fmt.Sprintf("package %s (%s)", last, spec.Path.Value)
-					body := func() string {
-						if strings.HasPrefix(path, "gno.land/") {
-							return fmt.Sprintf("[```%s``` on gno.land](https://%s)", last, path)
-						}
-						return fmt.Sprintf("[```%s``` on gno.land](https://gno.land)", last)
-					}()
-					return reply(ctx, protocol.Hover{
-						Contents: protocol.MarkupContent{
-							Kind:  protocol.Markdown,
-							Value: FormatHoverContent(header, body),
-						},
-						Range: posToRange(
-							int(params.Position.Line),
-							[]int{int(i.Pos()), int(i.End())},
-						),
-					}, nil)
-				}
-			}
+			return s.hoverPackageIdent(ctx, reply, pgf, params, i)
 		} else if offset >= int(e.Pos())-1 && offset < int(e.End())-1 { // A
 			symbol := s.completionStore.lookupSymbol(i.Name, e.Sel.Name)
 			if symbol != nil {
@@ -362,12 +210,132 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 	return reply(ctx, nil, nil)
 }
 
+func (s *server) hoverPackageIdent(ctx context.Context, reply jsonrpc2.Replier, pgf *ParsedGnoFile, params protocol.HoverParams, i *ast.Ident) error {
+	for _, spec := range pgf.File.Imports {
+		// remove leading and trailing `"`
+		path := spec.Path.Value[1 : len(spec.Path.Value)-1]
+		parts := strings.Split(path, "/")
+		last := parts[len(parts)-1]
+		if last == i.Name {
+			header := fmt.Sprintf("package %s (%s)", last, spec.Path.Value)
+			body := func() string {
+				if strings.HasPrefix(path, "gno.land/") {
+					return fmt.Sprintf("[```%s``` on gno.land](https://%s)", last, path)
+				}
+				return fmt.Sprintf("[```%s``` on gno.land](https://gno.land)", last)
+			}()
+			return reply(ctx, protocol.Hover{
+				Contents: protocol.MarkupContent{
+					Kind:  protocol.Markdown,
+					Value: FormatHoverContent(header, body),
+				},
+				Range: posToRange(
+					int(params.Position.Line),
+					[]int{int(i.Pos()), int(i.End())},
+				),
+			}, nil)
+		}
+	}
+	return reply(ctx, nil, nil)
+}
+
+func (s *server) hoverVariableIdent(ctx context.Context, reply jsonrpc2.Replier, pgf *ParsedGnoFile, params protocol.HoverParams, i *ast.Ident) error {
+	if i.Obj != nil {
+		switch u := i.Obj.Decl.(type) {
+		case *ast.Field:
+			if u.Type != nil {
+				switch t := u.Type.(type) {
+				case *ast.StarExpr:
+					header := fmt.Sprintf("%s %s *%s", i.Obj.Kind, u.Names[0], t.X)
+					return reply(ctx, protocol.Hover{
+						Contents: protocol.MarkupContent{
+							Kind:  protocol.Markdown,
+							Value: FormatHoverContent(header, ""),
+						},
+						Range: posToRange(
+							int(params.Position.Line),
+							[]int{int(i.Pos()), int(i.End())},
+						),
+					}, nil)
+				case *ast.Ident:
+					header := fmt.Sprintf("%s %s %s", i.Obj.Kind, u.Names[0], t.Name)
+					return reply(ctx, protocol.Hover{
+						Contents: protocol.MarkupContent{
+							Kind:  protocol.Markdown,
+							Value: FormatHoverContent(header, ""),
+						},
+						Range: posToRange(
+							int(params.Position.Line),
+							[]int{int(i.Pos()), int(i.End())},
+						),
+					}, nil)
+				}
+			}
+		case *ast.TypeSpec:
+			if u.Type != nil {
+				switch t := u.Type.(type) {
+				case *ast.StarExpr:
+					header := fmt.Sprintf("%s %s *%s", i.Obj.Kind, u.Name, t.X)
+					return reply(ctx, protocol.Hover{
+						Contents: protocol.MarkupContent{
+							Kind:  protocol.Markdown,
+							Value: FormatHoverContent(header, ""),
+						},
+						Range: posToRange(
+							int(params.Position.Line),
+							[]int{int(i.Pos()), int(i.End())},
+						),
+					}, nil)
+				case *ast.Ident:
+					header := fmt.Sprintf("%s %s %s", i.Obj.Kind, u.Name, t.Name)
+					return reply(ctx, protocol.Hover{
+						Contents: protocol.MarkupContent{
+							Kind:  protocol.Markdown,
+							Value: FormatHoverContent(header, ""),
+						},
+						Range: posToRange(
+							int(params.Position.Line),
+							[]int{int(i.Pos()), int(i.End())},
+						),
+					}, nil)
+				}
+			}
+		case *ast.ValueSpec:
+			if u.Type != nil {
+				switch t := u.Type.(type) {
+				case *ast.StarExpr:
+					header := fmt.Sprintf("%s %s *%s", i.Obj.Kind, u.Names[0], t.X)
+					return reply(ctx, protocol.Hover{
+						Contents: protocol.MarkupContent{
+							Kind:  protocol.Markdown,
+							Value: FormatHoverContent(header, ""),
+						},
+						Range: posToRange(
+							int(params.Position.Line),
+							[]int{int(i.Pos()), int(i.End())},
+						),
+					}, nil)
+				case *ast.Ident:
+					header := fmt.Sprintf("%s %s %s", i.Obj.Kind, u.Names[0], t.Name)
+					return reply(ctx, protocol.Hover{
+						Contents: protocol.MarkupContent{
+							Kind:  protocol.Markdown,
+							Value: FormatHoverContent(header, ""),
+						},
+						Range: posToRange(
+							int(params.Position.Line),
+							[]int{int(i.Pos()), int(i.End())},
+						),
+					}, nil)
+				}
+			}
+		default:
+			slog.Info("hover", "NOT HANDLED", u)
+		}
+	}
+	return reply(ctx, nil, nil)
+}
+
 func FormatHoverContent(header, body string) string {
 	return fmt.Sprintf("```gno\n%s\n```\n\n%s", header, body)
 }
-
-// handleSelectorExpr returns jsonrpc2.Replier for Hover
-// on SelectorExpr
-// TODO: Move duplicate logic here
-// func handleSelectorExpr(expr *ast.SelectorExpr) jsonrpc2.Replier {
-// }
