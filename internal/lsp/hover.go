@@ -239,6 +239,23 @@ func (s *server) hoverPackageIdent(ctx context.Context, reply jsonrpc2.Replier, 
 	return reply(ctx, nil, nil)
 }
 
+// getIdentNodes return idents from Expr
+// Note: only handles *ast.SelectorExpr and  *ast.CallExpr
+func getIdentNodes(n ast.Node) []*ast.Ident {
+	res := []*ast.Ident{}
+	switch t := n.(type) {
+	case *ast.Ident:
+		res = append(res, t)
+	case *ast.SelectorExpr:
+		res = append(res, t.Sel)
+		res = append(res, getIdentNodes(t.X)...)
+	case *ast.CallExpr:
+		res = append(res, getIdentNodes(t.Fun)...)
+	}
+
+	return res
+}
+
 func (s *server) hoverVariableIdent(ctx context.Context, reply jsonrpc2.Replier, pgf *ParsedGnoFile, params protocol.HoverParams, i *ast.Ident) error {
 	if i.Obj != nil {
 		switch u := i.Obj.Decl.(type) {
