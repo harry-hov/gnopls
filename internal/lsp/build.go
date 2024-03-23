@@ -20,7 +20,7 @@ type ErrorInfo struct {
 	Tool     string
 }
 
-func (s *server) PrecompileAndBuild(file *GnoFile) ([]ErrorInfo, error) {
+func (s *server) TranspileAndBuild(file *GnoFile) ([]ErrorInfo, error) {
 	pkgDir := filepath.Dir(file.URI.Filename())
 	pkgName := filepath.Base(pkgDir)
 	tmpDir := filepath.Join(s.env.GNOHOME, "gnopls", "tmp", pkgName)
@@ -30,10 +30,10 @@ func (s *server) PrecompileAndBuild(file *GnoFile) ([]ErrorInfo, error) {
 		return nil, err
 	}
 
-	preOut, _ := tools.Precompile(tmpDir)
+	preOut, _ := tools.Transpile(tmpDir)
 	slog.Info(string(preOut))
 	if len(preOut) > 0 {
-		return parseErrors(file, string(preOut), "precompile")
+		return parseErrors(file, string(preOut), "transpile")
 	}
 
 	buildOut, _ := tools.Build(tmpDir)
@@ -91,9 +91,11 @@ func parseErrors(file *GnoFile, output, cmd string) ([]ErrorInfo, error) {
 // numbers to account for the header information in the generated Go file.
 func findError(file *GnoFile, fname string, line, col int, msg string, tool string) ErrorInfo {
 	msg = strings.TrimSpace(msg)
-	if tool == "precompile" {
-		// fname parsed from precompile result can be incorrect
-		// e.g filename = `filename.gno: precompile: parse: tmp.gno`
+	// TODO: can be removed?
+	// see: https://github.com/gnolang/gno/pull/1670
+	if tool == "transpile" {
+		// fname parsed from transpile result can be incorrect
+		// e.g filename = `filename.gno: transpile: parse: tmp.gno`
 		parts := strings.Split(fname, ":")
 		fname = parts[0]
 	}

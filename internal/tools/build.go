@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 )
 
-// Build a Gno package: gno precompile -gobuild <dir>.
-// TODO: Remove this in the favour of directly using tools/precompile.go
+// Build a Gno package: gno transpile -gobuild <dir>.
+// TODO: Remove this in the favour of directly using tools/transpile.go
 func Build(rootDir string) ([]byte, error) {
-	return exec.Command("gno", "precompile", "-skip-imports", "-gobuild", filepath.Join(rootDir)).CombinedOutput()
+	return exec.Command("gno", "transpile", "-skip-imports", "-gobuild", filepath.Join(rootDir)).CombinedOutput()
 }

@@ -13,7 +13,7 @@ import (
 func (s *server) publishDiagnostics(ctx context.Context, conn jsonrpc2.Conn, file *GnoFile) error {
 	slog.Info("Lint", "path", file.URI.Filename())
 
-	errors, err := s.PrecompileAndBuild(file)
+	errors, err := s.TranspileAndBuild(file)
 	if err != nil {
 		return err
 	}
