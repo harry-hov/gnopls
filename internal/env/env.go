@@ -6,6 +6,11 @@ import (
 	"path/filepath"
 )
 
+var GlobalEnv = &Env{
+	GNOROOT: "",
+	GNOHOME: "",
+}
+
 type Env struct {
 	GNOROOT string
 	GNOHOME string

@@ -1,16 +1,21 @@
 package lsp
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"go/types"
+	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/gnolang/gno/gnovm/pkg/gnomod"
+	"github.com/harry-hov/gnopls/internal/env"
 	"go.uber.org/multierr"
 )
 
@@ -28,14 +33,22 @@ type PackageGetter interface {
 	GetPackageInfo(path string) *PackageInfo
 }
 
+// GetPackageInfo accepts path(abs) or importpath and returns
+// PackageInfo if found.
+// Note: it doesn't work for relative path
 func GetPackageInfo(path string) (*PackageInfo, error) {
-	// TODO: fix
-	if strings.HasPrefix(path, "/") {
-		// No op
-	} else if strings.HasPrefix(path, "gno.land/") {
-		path = "/Users/harry/Desktop/work/gno/examples/" + path
-	} else {
-		path = "/Users/harry/Desktop/work/gno/gnovm/stdlibs/" + path
+	// if not absolute, assume its import path
+	if !filepath.IsAbs(path) {
+		if env.GlobalEnv.GNOROOT == "" {
+			// if GNOROOT is unknown, we can't locate the
+			// `examples` and `stdlibs`
+			return nil, errors.New("GNOROOT not set")
+		}
+		if strings.HasPrefix(path, "gno.land/") { // look in `examples`
+			path = filepath.Join(env.GlobalEnv.GNOROOT, "examples", path)
+		} else { // look into `stdlibs`
+			path = filepath.Join(env.GlobalEnv.GNOROOT, "gnovm", "stdlibs", path)
+		}
 	}
 	return getPackageInfo(path)
 }
@@ -76,26 +89,28 @@ func getPackageInfo(path string) (*PackageInfo, error) {
 	}, nil
 }
 
-type TypeCheckResult struct {
-	pkg   *types.Package
-	fset  *token.FileSet
-	files []*ast.File
-	info  *types.Info
-	err   error
-}
-
 type TypeCheck struct {
 	cache map[string]*TypeCheckResult
 	cfg   *types.Config
 }
 
-// Unused, but satisfies the Importer interface.
+func NewTypeCheck() (*TypeCheck, *error) {
+	var errs error
+	return &TypeCheck{
+		cache: map[string]*TypeCheckResult{},
+		cfg: &types.Config{
+			Error: func(err error) {
+				errs = multierr.Append(errs, err)
+			},
+		},
+	}, &errs
+}
+
 func (tc *TypeCheck) Import(path string) (*types.Package, error) {
 	return tc.ImportFrom(path, "", 0)
 }
 
-// ImportFrom returns the imported package for the given import
-// path when imported by a package file located in dir.
+// ImportFrom returns the imported package for the given import path
 func (tc *TypeCheck) ImportFrom(path, _ string, _ types.ImportMode) (*types.Package, error) {
 	if pkg, ok := tc.cache[path]; ok {
 		return pkg.pkg, pkg.err
@@ -136,8 +151,37 @@ func (pi *PackageInfo) TypeCheck(tc *TypeCheck) *TypeCheckResult {
 		files = append(files, pgf)
 	}
 	pkg, err := tc.cfg.Check(pi.ImportPath, fset, files, info)
-	if err != nil {
-		return &TypeCheckResult{err: err}
+	return &TypeCheckResult{pkg: pkg, fset: fset, files: files, info: info, err: err}
+}
+
+type TypeCheckResult struct {
+	pkg   *types.Package
+	fset  *token.FileSet
+	files []*ast.File
+	info  *types.Info
+	err   error
+}
+
+func (tcr *TypeCheckResult) Errors() []ErrorInfo {
+	errs := multierr.Errors(tcr.err)
+	res := make([]ErrorInfo, 0, len(errs))
+	for _, err := range errs {
+		parts := strings.Split(err.Error(), ":")
+		if len(parts) < 4 {
+			slog.Error("TYPECHECK", "skipped", err)
+		}
+		filename := strings.TrimSpace(parts[0])
+		line, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
+		col, _ := strconv.Atoi(strings.TrimSpace(parts[2]))
+		msg := strings.TrimSpace(strings.Join(parts[3:], ":"))
+		res = append(res, ErrorInfo{
+			FileName: filename,
+			Line:     line,
+			Column:   col,
+			Span:     []int{col, math.MaxInt},
+			Msg:      msg,
+			Tool:     "go/typecheck",
+		})
 	}
-	return &TypeCheckResult{pkg: pkg, fset: fset, files: files, info: info, err: nil}
+	return res
 }

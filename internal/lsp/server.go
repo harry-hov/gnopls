@@ -26,16 +26,16 @@ type server struct {
 	formatOpt tools.FormattingOption
 }
 
-func BuildServerHandler(conn jsonrpc2.Conn, env *env.Env) jsonrpc2.Handler {
+func BuildServerHandler(conn jsonrpc2.Conn, e *env.Env) jsonrpc2.Handler {
 	dirs := []string{}
-	if env.GNOROOT != "" {
-		dirs = append(dirs, filepath.Join(env.GNOROOT, "examples"))
-		dirs = append(dirs, filepath.Join(env.GNOROOT, "gnovm/stdlibs"))
+	if e.GNOROOT != "" {
+		dirs = append(dirs, filepath.Join(e.GNOROOT, "examples"))
+		dirs = append(dirs, filepath.Join(e.GNOROOT, "gnovm/stdlibs"))
 	}
 	server := &server{
 		conn: conn,
 
-		env: env,
+		env: e,
 
 		snapshot:        NewSnapshot(),
 		completionStore: InitCompletionStore(dirs),
@@ -43,7 +43,7 @@ func BuildServerHandler(conn jsonrpc2.Conn, env *env.Env) jsonrpc2.Handler {
 
 		formatOpt: tools.Gofumpt,
 	}
-
+	env.GlobalEnv = e
 	return jsonrpc2.ReplyHandler(server.ServerHandler)
 }
 

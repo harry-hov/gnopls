@@ -29,8 +29,24 @@ func NewCache() *Cache {
 }
 
 func (s *server) UpdateCache(pkgPath string) {
+	// TODO: Unify `GetPackageInfo()` and `PackageFromDir()`?
 	pkg, err := PackageFromDir(pkgPath, false)
-	if err == nil {
-		s.cache.pkgs.Set(pkgPath, pkg)
+	if err != nil {
+		return
 	}
+	pkginfo, err := GetPackageInfo(pkgPath)
+	if err != nil {
+		return
+	}
+
+	tc, errs := NewTypeCheck()
+	tc.cfg.Importer = tc // set typeCheck importer
+	res := pkginfo.TypeCheck(tc)
+
+	// Mutate `res.err` with `errs`, as `res.err` contains
+	// only the first error found.
+	res.err = *errs
+
+	pkg.TypeCheckResult = res // set typeCheck result
+	s.cache.pkgs.Set(pkgPath, pkg)
 }

@@ -17,6 +17,13 @@ func (s *server) publishDiagnostics(ctx context.Context, conn jsonrpc2.Conn, fil
 	if err != nil {
 		return err
 	}
+	pkg, ok := s.cache.pkgs.Get(filepath.Dir(string(file.URI.Filename())))
+	if ok {
+		errs := pkg.TypeCheckResult.Errors()
+		if errs != nil {
+			errors = append(errors, errs...)
+		}
+	}
 
 	mPublishDiagnosticParams := make(map[string]*protocol.PublishDiagnosticsParams)
 	publishDiagnosticParams := make([]*protocol.PublishDiagnosticsParams, 0)
