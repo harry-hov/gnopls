@@ -110,17 +110,9 @@ func findError(file *GnoFile, fname string, line, col int, msg string, tool stri
 	needle := parens.ReplaceAllString(msg, "")
 	tokens := strings.Fields(needle)
 
-	shiftedLine := line
-	if tool == "build" {
-		// The generated Go file has 4 lines of header information.
-		//
-		// +1 for zero-indexing.
-		shiftedLine = line - 4
-	}
-
 	errorInfo := ErrorInfo{
 		FileName: strings.TrimPrefix(GoToGnoFileName(filepath.Base(fname)), "."),
-		Line:     shiftedLine,
+		Line:     line,
 		Column:   col,
 		Span:     []int{0, 0},
 		Msg:      msg,
@@ -129,7 +121,7 @@ func findError(file *GnoFile, fname string, line, col int, msg string, tool stri
 
 	lines := strings.SplitAfter(string(file.Src), "\n")
 	for i, l := range lines {
-		if i != shiftedLine-1 { // zero-indexed
+		if i != line-1 { // zero-indexed
 			continue
 		}
 		for _, token := range tokens {
