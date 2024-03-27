@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -129,9 +130,13 @@ func (tc *TypeCheck) ImportFrom(path, _ string, _ types.ImportMode) (*types.Pack
 func (pi *PackageInfo) TypeCheck(tc *TypeCheck) *TypeCheckResult {
 	fset := token.NewFileSet()
 	info := &types.Info{
-		Types: make(map[ast.Expr]types.TypeAndValue),
-		Defs:  make(map[*ast.Ident]types.Object),
-		Uses:  make(map[*ast.Ident]types.Object),
+		Types:      make(map[ast.Expr]types.TypeAndValue),
+		Defs:       make(map[*ast.Ident]types.Object),
+		Uses:       make(map[*ast.Ident]types.Object),
+		Implicits:  make(map[ast.Node]types.Object),
+		Instances:  make(map[*ast.Ident]types.Instance),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+		Scopes:     make(map[ast.Node]*types.Scope),
 	}
 	files := make([]*ast.File, 0, len(pi.Files))
 	var errs error
@@ -184,4 +189,47 @@ func (tcr *TypeCheckResult) Errors() []ErrorInfo {
 		})
 	}
 	return res
+}
+
+// Prints types.Info in a tabular form
+// Kept only for debugging purpose.
+func formatTypeInfo(fset token.FileSet, info *types.Info) string {
+	var items []string = nil
+	for expr, tv := range info.Types {
+		var buf strings.Builder
+		posn := fset.Position(expr.Pos())
+		tvstr := tv.Type.String()
+		if tv.Value != nil {
+			tvstr += " = " + tv.Value.String()
+		}
+		// line:col | expr | mode : type = value
+		fmt.Fprintf(&buf, "%2d:%2d | %-19s | %-7s : %s",
+			posn.Line, posn.Column, types.ExprString(expr),
+			mode(tv), tvstr)
+		items = append(items, buf.String())
+	}
+	sort.Strings(items)
+	return strings.Join(items, "\n")
+}
+
+func mode(tv types.TypeAndValue) string {
+	switch {
+	case tv.IsVoid():
+		return "void"
+	case tv.IsType():
+		return "type"
+	case tv.IsBuiltin():
+		return "builtin"
+	case tv.IsNil():
+		return "nil"
+	case tv.Assignable():
+		if tv.Addressable() {
+			return "var"
+		}
+		return "mapindex"
+	case tv.IsValue():
+		return "value"
+	default:
+		return "unknown"
+	}
 }
