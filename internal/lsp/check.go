@@ -185,7 +185,7 @@ func (tcr *TypeCheckResult) Errors() []ErrorInfo {
 			Column:   col,
 			Span:     []int{col, math.MaxInt},
 			Msg:      msg,
-			Tool:     "go/typecheck",
+			Tool:     "typecheck",
 		})
 	}
 	return res
@@ -212,12 +212,43 @@ func formatTypeInfo(fset token.FileSet, info *types.Info) string {
 	return strings.Join(items, "\n")
 }
 
+// Prints types.Info in a tabular form
+// Kept only for debugging purpose.
+func getTypeAndValue(
+	fset token.FileSet,
+	info *types.Info,
+	tok string,
+	line, offset int,
+) (ast.Expr, *types.TypeAndValue) {
+	for expr, tv := range info.Types {
+		if tok != types.ExprString(expr) {
+			continue
+		}
+		posn := fset.Position(expr.Pos())
+		if line != posn.Line {
+			continue
+		}
+		slog.Info("getTypeInfo", "offset", offset, "pos", expr.Pos(), "end", expr.End())
+		if token.Pos(offset) < expr.Pos() &&
+			token.Pos(offset) > expr.End() {
+			continue
+		}
+
+		// tv.Value.
+		tvstr := tv.Type.String()
+		if tv.Value != nil {
+			tvstr += " = " + tv.Value.String()
+		}
+
+		return expr, &tv
+	}
+	return nil, nil
+}
+
 func mode(tv types.TypeAndValue) string {
 	switch {
 	case tv.IsVoid():
 		return "void"
-	case tv.IsType():
-		return "type"
 	case tv.IsBuiltin():
 		return "builtin"
 	case tv.IsNil():

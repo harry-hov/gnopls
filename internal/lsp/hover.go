@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"go/token"
+	"go/types"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -27,38 +29,92 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 	}
 
 	uri := params.TextDocument.URI
+
+	// Get snapshot of the current file
 	file, ok := s.snapshot.Get(uri.Filename())
 	if !ok {
 		return reply(ctx, nil, errors.New("snapshot not found"))
 	}
-
-	offset := file.PositionToOffset(params.Position)
-	line := params.Position.Line
-	// tokedf := pgf.FileSet.AddFile(doc.Path, -1, len(doc.Content))
-	// target := tokedf.Pos(offset)
-
-	slog.Info("hover", "line", line, "offset", offset)
+	// Try parsing current file
 	pgf, err := file.ParseGno(ctx)
 	if err != nil {
 		return reply(ctx, nil, errors.New("cannot parse gno file"))
 	}
+	// Load pkg from cache
+	pkg, ok := s.cache.pkgs.Get(filepath.Dir(string(params.TextDocument.URI.Filename())))
+	if !ok {
+		return reply(ctx, nil, nil)
+	}
 
-	var expr ast.Expr
-	ast.Inspect(pgf.File, func(n ast.Node) bool {
-		if e, ok := n.(ast.Expr); ok && pgf.Fset.Position(e.Pos()).Line == int(line+1) {
-			expr = e
-			return false
+	// Calculate offset and line
+	offset := file.PositionToOffset(params.Position)
+	line := params.Position.Line + 1 // starts at 0, so adding 1
+
+	slog.Info("hover", "line", line, "offset", offset)
+
+	// Handle hovering over import paths
+	for _, spec := range pgf.File.Imports {
+		// Inclusive of the end points
+		if spec.Path.Pos() <= token.Pos(offset) && token.Pos(offset) <= spec.Path.End() {
+			return hoverImport(ctx, reply, pgf, params, spec)
 		}
-		return true
-	})
+	}
 
-	// TODO: Remove duplicate code
-	switch e := expr.(type) {
+	// Get path enclosing
+	path := pathEnclosingObjNode(pgf.File, token.Pos(offset))
+	if len(path) < 1 {
+		return reply(ctx, nil, nil)
+	}
+	info := pkg.TypeCheckResult.info
+
+	switch i := path[0].(type) {
+	case *ast.Ident:
+		_, tv := getTypeAndValue(
+			*pkg.TypeCheckResult.fset,
+			info, i.Name,
+			int(line),
+			offset,
+		)
+		if tv == nil || tv.Type == nil {
+			break
+		}
+		typeStr := tv.Type.String()
+
+		// local
+
+		// Handle builtins
+		if doc, ok := isBuiltin(i, tv); ok {
+			return hoverBuiltinTypes(ctx, reply, params, i, tv, doc)
+		}
+
+		header := fmt.Sprintf("%s %s %s", mode(*tv), i.Name, typeStr)
+		return reply(ctx, protocol.Hover{
+			Contents: protocol.MarkupContent{
+				Kind:  protocol.Markdown,
+				Value: FormatHoverContent(header, ""),
+			},
+			Range: posToRange(
+				int(params.Position.Line),
+				[]int{int(i.Pos()), int(i.End())},
+			),
+		}, nil)
+	default:
+		return reply(ctx, nil, nil)
+	}
+
+	expr := getExprAtLine(pgf, int(line))
+	if expr == nil {
+		return reply(ctx, nil, nil)
+	}
+	switch e := expr.(type) { // TODO: Remove duplicate code
 	case *ast.CallExpr:
 		slog.Info("hover - CALL_EXPR")
 		switch v := e.Fun.(type) {
 		case *ast.Ident:
 			// TODO: don't show methods
+			if offset < int(v.Pos()) && offset > int(v.End()) {
+				break
+			}
 			pkgPath := filepath.Dir(params.TextDocument.URI.Filename())
 			sym, ok := s.cache.lookupSymbol(pkgPath, v.Name)
 			if !ok {
@@ -83,9 +139,9 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 
 			if offset >= int(i.Pos())-1 && offset < int(i.End())-1 { // pkg or var
 				if i.Obj != nil { // var
-					return s.hoverVariableIdent(ctx, reply, pgf, params, i)
+					return hoverVariableIdent(ctx, reply, pgf, params, i)
 				}
-				return s.hoverPackageIdent(ctx, reply, pgf, params, i)
+				return hoverPackageIdent(ctx, reply, pgf, params, i)
 			} else if offset >= int(e.Pos())-1 && offset < int(e.End())-1 { // Func
 				symbol := s.completionStore.lookupSymbol(i.Name, v.Sel.Name)
 				if symbol != nil {
@@ -113,10 +169,10 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 			return reply(ctx, nil, nil)
 		}
 		if i.Obj != nil { // its a var
-			return s.hoverVariableIdent(ctx, reply, pgf, params, i)
+			return hoverVariableIdent(ctx, reply, pgf, params, i)
 		}
 		if offset >= int(i.Pos())-1 && offset < int(i.End())-1 { // X
-			return s.hoverPackageIdent(ctx, reply, pgf, params, i)
+			return hoverPackageIdent(ctx, reply, pgf, params, i)
 		} else if offset >= int(e.Pos())-1 && offset < int(e.End())-1 { // A
 			symbol := s.completionStore.lookupSymbol(i.Name, e.Sel.Name)
 			if symbol != nil {
@@ -151,10 +207,6 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 				switch t := funcDecl.Recv.List[0].Type.(type) {
 				case *ast.StarExpr:
 					k := fmt.Sprintf("*%s", t.X)
-					pkg, ok := s.cache.pkgs.Get(filepath.Dir(string(params.TextDocument.URI.Filename())))
-					if !ok {
-						return reply(ctx, nil, nil)
-					}
 					var structure *Structure
 					for _, st := range pkg.Structures {
 						if st.Name == fmt.Sprintf("%s", t.X) {
@@ -210,7 +262,62 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 	return reply(ctx, nil, nil)
 }
 
-func (s *server) hoverPackageIdent(ctx context.Context, reply jsonrpc2.Replier, pgf *ParsedGnoFile, params protocol.HoverParams, i *ast.Ident) error {
+func hoverBuiltinTypes(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, i *ast.Ident, tv *types.TypeAndValue, doc string) error {
+	t := tv.Type.String()
+	m := mode(*tv)
+	var header string
+	if t == "nil" || t == "untyped nil" { // special case?
+		header = "var nil Type"
+	} else if strings.HasPrefix(t, "func") && m == "builtin" {
+		header = i.Name + strings.TrimPrefix(t, "func")
+	} else if (i.Name == "true" || i.Name == "false") && t == "bool" {
+		header = `const (
+	true	= 0 == 0	// Untyped bool.
+	false	= 0 != 0	// Untyped bool.
+)`
+	} else {
+		header = fmt.Sprintf("%s %s %s", m, i.Name, t)
+	}
+
+	return reply(ctx, protocol.Hover{
+		Contents: protocol.MarkupContent{
+			Kind:  protocol.Markdown,
+			Value: FormatHoverContent(header, doc),
+		},
+		Range: posToRange(
+			int(params.Position.Line),
+			[]int{int(i.Pos()), int(i.End())},
+		),
+	}, nil)
+}
+
+// TODO: check if imports exists in `examples` or `stdlibs`
+func hoverImport(ctx context.Context, reply jsonrpc2.Replier, pgf *ParsedGnoFile, params protocol.HoverParams, spec *ast.ImportSpec) error {
+	// remove leading and trailing `"`
+	path := spec.Path.Value[1 : len(spec.Path.Value)-1]
+	parts := strings.Split(path, "/")
+	last := parts[len(parts)-1]
+
+	header := fmt.Sprintf("package %s (%s)", last, spec.Path.Value)
+	body := func() string {
+		if strings.HasPrefix(path, "gno.land/") {
+			return fmt.Sprintf("[```%s``` on gno.land](https://%s)", last, path)
+		}
+		return fmt.Sprintf("[```%s``` on gno.land](https://gno.land)", last)
+	}()
+	return reply(ctx, protocol.Hover{
+		Contents: protocol.MarkupContent{
+			Kind:  protocol.Markdown,
+			Value: FormatHoverContent(header, body),
+		},
+		Range: posToRange(
+			int(params.Position.Line),
+			[]int{int(spec.Pos()), int(spec.End())},
+		),
+	}, nil)
+}
+
+func hoverPackageIdent(ctx context.Context, reply jsonrpc2.Replier, pgf *ParsedGnoFile, params protocol.HoverParams, i *ast.Ident) error {
 	for _, spec := range pgf.File.Imports {
 		// remove leading and trailing `"`
 		path := spec.Path.Value[1 : len(spec.Path.Value)-1]
@@ -239,24 +346,7 @@ func (s *server) hoverPackageIdent(ctx context.Context, reply jsonrpc2.Replier, 
 	return reply(ctx, nil, nil)
 }
 
-// getIdentNodes return idents from Expr
-// Note: only handles *ast.SelectorExpr and  *ast.CallExpr
-func getIdentNodes(n ast.Node) []*ast.Ident {
-	res := []*ast.Ident{}
-	switch t := n.(type) {
-	case *ast.Ident:
-		res = append(res, t)
-	case *ast.SelectorExpr:
-		res = append(res, t.Sel)
-		res = append(res, getIdentNodes(t.X)...)
-	case *ast.CallExpr:
-		res = append(res, getIdentNodes(t.Fun)...)
-	}
-
-	return res
-}
-
-func (s *server) hoverVariableIdent(ctx context.Context, reply jsonrpc2.Replier, pgf *ParsedGnoFile, params protocol.HoverParams, i *ast.Ident) error {
+func hoverVariableIdent(ctx context.Context, reply jsonrpc2.Replier, pgf *ParsedGnoFile, params protocol.HoverParams, i *ast.Ident) error {
 	if i.Obj != nil {
 		switch u := i.Obj.Decl.(type) {
 		case *ast.Field:
@@ -356,3 +446,94 @@ func (s *server) hoverVariableIdent(ctx context.Context, reply jsonrpc2.Replier,
 func FormatHoverContent(header, body string) string {
 	return fmt.Sprintf("```gno\n%s\n```\n\n%s", header, body)
 }
+
+// getIdentNodes return idents from Expr
+// Note: only handles *ast.SelectorExpr and  *ast.CallExpr
+func getIdentNodes(n ast.Node) []*ast.Ident {
+	res := []*ast.Ident{}
+	switch t := n.(type) {
+	case *ast.Ident:
+		res = append(res, t)
+	case *ast.SelectorExpr:
+		res = append(res, t.Sel)
+		res = append(res, getIdentNodes(t.X)...)
+	case *ast.CallExpr:
+		res = append(res, getIdentNodes(t.Fun)...)
+	}
+
+	return res
+}
+
+func getExprAtLine(pgf *ParsedGnoFile, line int) ast.Expr {
+	var expr ast.Expr
+	ast.Inspect(pgf.File, func(n ast.Node) bool {
+		if e, ok := n.(ast.Expr); ok && pgf.Fset.Position(e.Pos()).Line == int(line) {
+			expr = e
+			return false
+		}
+		return true
+	})
+	return expr
+}
+
+// pathEnclosingObjNode returns the AST path to the object-defining
+// node associated with pos. "Object-defining" means either an
+// *ast.Ident mapped directly to a types.Object or an ast.Node mapped
+// implicitly to a types.Object.
+func pathEnclosingObjNode(f *ast.File, pos token.Pos) []ast.Node {
+	var (
+		path  []ast.Node
+		found bool
+	)
+
+	ast.Inspect(f, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+
+		if n == nil {
+			path = path[:len(path)-1]
+			return false
+		}
+
+		path = append(path, n)
+
+		switch n := n.(type) {
+		case *ast.Ident:
+			// Include the position directly after identifier. This handles
+			// the common case where the cursor is right after the
+			// identifier the user is currently typing. Previously we
+			// handled this by calling astutil.PathEnclosingInterval twice,
+			// once for "pos" and once for "pos-1".
+			found = n.Pos() <= pos && pos <= n.End()
+		case *ast.ImportSpec:
+			if n.Path.Pos() <= pos && pos < n.Path.End() {
+				found = true
+				// If import spec has a name, add name to path even though
+				// position isn't in the name.
+				if n.Name != nil {
+					path = append(path, n.Name)
+				}
+			}
+		case *ast.StarExpr:
+			// Follow star expressions to the inner identifier.
+			if pos == n.Star {
+				pos = n.X.Pos()
+			}
+		}
+
+		return !found
+	})
+
+	if len(path) == 0 {
+		return nil
+	}
+
+	// Reverse path so leaf is first element.
+	for i := 0; i < len(path)/2; i++ {
+		path[i], path[len(path)-1-i] = path[len(path)-1-i], path[i]
+	}
+
+	return path
+}
+

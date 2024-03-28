@@ -75,6 +75,8 @@ type Package struct {
 	Functions  []*Function
 	Methods    cmap.ConcurrentMap[string, []*Method]
 	Structures []*Structure
+
+	TypeCheckResult *TypeCheckResult
 }
 
 type Symbol struct {

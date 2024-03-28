@@ -11,7 +11,9 @@ require (
 	go.lsp.dev/pkg v0.0.0-20210717090340-384b27a52fb2
 	go.lsp.dev/protocol v0.12.0
 	go.lsp.dev/uri v0.3.0
+	go.uber.org/multierr v1.9.0
 	golang.org/x/mod v0.14.0
+	golang.org/x/text v0.14.0
 	mvdan.cc/gofumpt v0.4.0
 )
 
@@ -52,7 +54,6 @@ require (
 	go.etcd.io/bbolt v1.3.8 // indirect
 	go.opencensus.io v0.22.5 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
-	go.uber.org/multierr v1.9.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/crypto v0.15.0 // indirect
 	golang.org/x/net v0.17.0 // indirect
