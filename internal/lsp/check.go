@@ -260,6 +260,8 @@ func mode(tv types.TypeAndValue) string {
 		return "mapindex"
 	case tv.IsValue():
 		return "value"
+	case tv.IsType():
+		return "type"
 	default:
 		return "unknown"
 	}

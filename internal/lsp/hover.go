@@ -79,8 +79,14 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 			break
 		}
 		typeStr := tv.Type.String()
+		m := mode(*tv)
 
-		// local
+		// local type
+		if (strings.HasPrefix(typeStr, pkg.ImportPath) ||
+			strings.HasPrefix(typeStr, "*"+pkg.ImportPath)) && m == "type" {
+			typeStr := parseType(typeStr, pkg.ImportPath)
+			return hoverLocalTypes(ctx, reply, params, pkg, i, tv, typeStr)
+		}
 
 		// Handle builtins
 		if doc, ok := isBuiltin(i, tv); ok {
@@ -260,6 +266,45 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 	}
 
 	return reply(ctx, nil, nil)
+}
+
+func hoverLocalTypes(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident, tv *types.TypeAndValue, typeName string) error {
+	// Look into structures
+	var structure *Structure
+	for _, st := range pkg.Structures {
+		if st.Name == fmt.Sprintf("%s", typeName) {
+			structure = st
+			break
+		}
+	}
+	if structure == nil {
+		return reply(ctx, nil, nil)
+	}
+	var header, body string
+	header = fmt.Sprintf("%s %s %s\n\n", mode(*tv), structure.Name, structure.String)
+
+	methods, ok := pkg.Methods.Get(typeName)
+	if ok {
+		body = "```gno\n"
+		for _, m := range methods {
+			if m.IsExported() {
+				body += fmt.Sprintf("%s\n", m.Signature)
+			}
+		}
+		body += "```\n"
+		body += structure.Doc + "\n"
+	}
+
+	return reply(ctx, protocol.Hover{
+		Contents: protocol.MarkupContent{
+			Kind:  protocol.Markdown,
+			Value: FormatHoverContent(header, body),
+		},
+		Range: posToRange(
+			int(params.Position.Line),
+			[]int{int(i.Pos()), int(i.End())},
+		),
+	}, nil)
 }
 
 func hoverBuiltinTypes(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, i *ast.Ident, tv *types.TypeAndValue, doc string) error {
@@ -535,5 +580,11 @@ func pathEnclosingObjNode(f *ast.File, pos token.Pos) []ast.Node {
 	}
 
 	return path
+}
+
+// parseType parses the type name from full path and return
+// the type as string and if it is isStar expr.
+func parseType(t, importpath string) string {
+	return strings.TrimPrefix(strings.TrimPrefix(t, "*"), importpath+".")
 }
 

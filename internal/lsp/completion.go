@@ -267,7 +267,7 @@ func PackageFromDir(path string, onlyExports bool) (*Package, error) {
 					if t.Recv.NumFields() > 0 && t.Recv.List[0].Type != nil {
 						switch rt := t.Recv.List[0].Type.(type) {
 						case *ast.StarExpr:
-							k := fmt.Sprintf("*%s", rt.X)
+							k := fmt.Sprintf("%s", rt.X)
 							m := &Method{
 								Position:  fset.Position(t.Pos()),
 								FileURI:   getURI(absPath),
