@@ -80,20 +80,25 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 		}
 		typeStr := tv.Type.String()
 		m := mode(*tv)
-
-		// local type
-		if (strings.HasPrefix(typeStr, pkg.ImportPath) ||
-			strings.HasPrefix(typeStr, "*"+pkg.ImportPath)) && m == "type" {
-			typeStr := parseType(typeStr, pkg.ImportPath)
-			return hoverLocalTypes(ctx, reply, params, pkg, i, tv, typeStr)
-		}
+		isLocalGlobal := strings.Contains(typeStr, pkg.ImportPath)
 
 		// Handle builtins
 		if doc, ok := isBuiltin(i, tv); ok {
-			return hoverBuiltinTypes(ctx, reply, params, i, tv, doc)
+			return hoverBuiltinTypes(ctx, reply, params, i, tv, m, doc)
 		}
 
-		header := fmt.Sprintf("%s %s %s", mode(*tv), i.Name, typeStr)
+		// local var
+		if (isLocalGlobal || !strings.Contains(typeStr, "gno.land")) && m == "var" {
+			return hoverLocalVar(ctx, reply, params, pkg, i, tv, m, typeStr, isLocalGlobal)
+		}
+
+		// local type
+		if isLocalGlobal && m == "type" {
+			typeStr := parseType(typeStr, pkg.ImportPath)
+			return hoverLocalTypes(ctx, reply, params, pkg, i, tv, m, typeStr)
+		}
+
+		header := fmt.Sprintf("%s %s %s", m, i.Name, typeStr)
 		return reply(ctx, protocol.Hover{
 			Contents: protocol.MarkupContent{
 				Kind:  protocol.Markdown,
@@ -268,7 +273,27 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 	return reply(ctx, nil, nil)
 }
 
-func hoverLocalTypes(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident, tv *types.TypeAndValue, typeName string) error {
+// TODO: handle var doc
+func hoverLocalVar(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident, tv *types.TypeAndValue, mode, typeStr string, isLocalGlobal bool) error {
+	t := typeStr
+	if isLocalGlobal {
+		t = strings.Replace(typeStr, pkg.ImportPath+".", "", 1)
+	}
+
+	header := fmt.Sprintf("%s %s %s", mode, i.Name, t)
+	return reply(ctx, protocol.Hover{
+		Contents: protocol.MarkupContent{
+			Kind:  protocol.Markdown,
+			Value: FormatHoverContent(header, ""),
+		},
+		Range: posToRange(
+			int(params.Position.Line),
+			[]int{int(i.Pos()), int(i.End())},
+		),
+	}, nil)
+}
+
+func hoverLocalTypes(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident, tv *types.TypeAndValue, mode, typeName string) error {
 	// Look into structures
 	var structure *Structure
 	for _, st := range pkg.Structures {
@@ -281,7 +306,7 @@ func hoverLocalTypes(ctx context.Context, reply jsonrpc2.Replier, params protoco
 		return reply(ctx, nil, nil)
 	}
 	var header, body string
-	header = fmt.Sprintf("%s %s %s\n\n", mode(*tv), structure.Name, structure.String)
+	header = fmt.Sprintf("%s %s %s\n\n", mode, structure.Name, structure.String)
 
 	methods, ok := pkg.Methods.Get(typeName)
 	if ok {
@@ -307,13 +332,12 @@ func hoverLocalTypes(ctx context.Context, reply jsonrpc2.Replier, params protoco
 	}, nil)
 }
 
-func hoverBuiltinTypes(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, i *ast.Ident, tv *types.TypeAndValue, doc string) error {
+func hoverBuiltinTypes(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, i *ast.Ident, tv *types.TypeAndValue, mode, doc string) error {
 	t := tv.Type.String()
-	m := mode(*tv)
 	var header string
 	if t == "nil" || t == "untyped nil" { // special case?
 		header = "var nil Type"
-	} else if strings.HasPrefix(t, "func") && m == "builtin" {
+	} else if strings.HasPrefix(t, "func") && mode == "builtin" {
 		header = i.Name + strings.TrimPrefix(t, "func")
 	} else if (i.Name == "true" || i.Name == "false") && t == "bool" {
 		header = `const (
@@ -321,7 +345,7 @@ func hoverBuiltinTypes(ctx context.Context, reply jsonrpc2.Replier, params proto
 	false	= 0 != 0	// Untyped bool.
 )`
 	} else {
-		header = fmt.Sprintf("%s %s %s", m, i.Name, t)
+		header = fmt.Sprintf("%s %s %s", mode, i.Name, t)
 	}
 
 	return reply(ctx, protocol.Hover{
