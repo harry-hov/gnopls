@@ -80,7 +80,7 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 		}
 		typeStr := tv.Type.String()
 		m := mode(*tv)
-		isLocalGlobal := strings.Contains(typeStr, pkg.ImportPath)
+		isPackageLevelGlobal := strings.Contains(typeStr, pkg.ImportPath) // better name
 
 		// Handle builtins
 		if doc, ok := isBuiltin(i, tv); ok {
@@ -88,14 +88,20 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 		}
 
 		// local var
-		if (isLocalGlobal || !strings.Contains(typeStr, "gno.land")) && m == "var" {
-			return hoverLocalVar(ctx, reply, params, pkg, i, tv, m, typeStr, isLocalGlobal)
+		if (isPackageLevelGlobal || !strings.Contains(typeStr, "gno.land")) && m == "var" {
+			return hoverLocalVar(ctx, reply, params, pkg, i, tv, m, typeStr, isPackageLevelGlobal)
 		}
 
 		// local type
-		if isLocalGlobal && m == "type" {
+		if isPackageLevelGlobal && m == "type" {
 			typeStr := parseType(typeStr, pkg.ImportPath)
-			return hoverLocalTypes(ctx, reply, params, pkg, i, tv, m, typeStr)
+			return hoverPackageLevelTypes(ctx, reply, params, pkg, i, tv, m, typeStr)
+		}
+
+		// local global and is value
+		if m == "value" {
+			typeStr := parseType(typeStr, pkg.ImportPath)
+			return hoverPackageLevelValue(ctx, reply, params, pkg, i, tv, m, typeStr, isPackageLevelGlobal)
 		}
 
 		header := fmt.Sprintf("%s %s %s", m, i.Name, typeStr)
@@ -274,6 +280,33 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 }
 
 // TODO: handle var doc
+func hoverPackageLevelValue(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident, tv *types.TypeAndValue, mode, typeStr string, isPackageLevelGlobal bool) error {
+	var header, body string
+	for _, s := range pkg.Symbols {
+		if s.Name == i.Name {
+			header = s.Signature
+			body = s.Doc
+			break
+		}
+	}
+
+	if header == "" {
+		return reply(ctx, nil, nil)
+	}
+
+	return reply(ctx, protocol.Hover{
+		Contents: protocol.MarkupContent{
+			Kind:  protocol.Markdown,
+			Value: FormatHoverContent(header, body),
+		},
+		Range: posToRange(
+			int(params.Position.Line),
+			[]int{int(i.Pos()), int(i.End())},
+		),
+	}, nil)
+}
+
+// TODO: handle var doc
 func hoverLocalVar(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident, tv *types.TypeAndValue, mode, typeStr string, isLocalGlobal bool) error {
 	t := typeStr
 	if isLocalGlobal {
@@ -293,7 +326,7 @@ func hoverLocalVar(ctx context.Context, reply jsonrpc2.Replier, params protocol.
 	}, nil)
 }
 
-func hoverLocalTypes(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident, tv *types.TypeAndValue, mode, typeName string) error {
+func hoverPackageLevelTypes(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident, tv *types.TypeAndValue, mode, typeName string) error {
 	// Look into structures
 	var structure *Structure
 	for _, st := range pkg.Structures {
@@ -318,7 +351,7 @@ func hoverLocalTypes(ctx context.Context, reply jsonrpc2.Replier, params protoco
 		}
 	} else { // If not in structures, look into symbols
 		for _, s := range pkg.Symbols {
-			if s.Name == fmt.Sprintf("%s", typeName) {
+			if s.Name == i.Name {
 				header = fmt.Sprintf("%s %s", mode, s.Signature)
 				body = s.Doc
 				break
