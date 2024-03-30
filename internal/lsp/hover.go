@@ -63,7 +63,7 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 
 	// Get path enclosing
 	path := pathEnclosingObjNode(pgf.File, token.Pos(offset))
-	if len(path) < 1 {
+	if len(path) < 2 {
 		return reply(ctx, nil, nil)
 	}
 
@@ -76,7 +76,16 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 			offset,
 		)
 		if tv == nil || tv.Type == nil {
-			break
+			var body string
+			switch t := path[1].(type) {
+			case *ast.FuncDecl:
+				if t.Recv != nil {
+					return hoverMethodDecl(ctx, reply, params, pkg, i, t)
+				}
+				return hoverFuncDecl(ctx, reply, params, pkg, i, t)
+			default:
+				return reply(ctx, nil, nil)
+			}
 		}
 		typeStr := tv.Type.String()
 		m := mode(*tv)
@@ -277,6 +286,78 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 	}
 
 	return reply(ctx, nil, nil)
+}
+
+func hoverMethodDecl(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident, decl *ast.FuncDecl) error {
+	if decl.Recv.NumFields() != 1 || decl.Recv.List[0].Type == nil {
+		reply(ctx, nil, nil)
+	}
+
+	var key string
+	switch rt := decl.Recv.List[0].Type.(type) {
+	case *ast.StarExpr:
+		key = fmt.Sprintf("%s", rt.X)
+	case *ast.Ident:
+		key = fmt.Sprintf("%s", rt.Name)
+	default:
+		reply(ctx, nil, nil)
+	}
+
+	methods, ok := pkg.Methods.Get(key)
+	if !ok {
+		reply(ctx, nil, nil)
+	}
+
+	var header, body string
+	for _, m := range methods {
+		if m.Name == i.Name {
+			header = m.Signature
+			body = m.Doc
+			break
+		}
+	}
+
+	if header == "" {
+		return reply(ctx, nil, nil)
+	}
+
+	return reply(ctx, protocol.Hover{
+		Contents: protocol.MarkupContent{
+			Kind:  protocol.Markdown,
+			Value: FormatHoverContent(header, body),
+		},
+		Range: posToRange(
+			int(params.Position.Line),
+			[]int{int(i.Pos()), int(i.End())},
+		),
+	}, nil)
+}
+
+// TODO: handle var doc
+func hoverFuncDecl(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident, decl *ast.FuncDecl) error {
+	var header, body string
+	for _, s := range pkg.Symbols {
+		if s.Name == i.Name {
+			header = s.Signature
+			body = s.Doc
+			break
+		}
+	}
+
+	if header == "" {
+		return reply(ctx, nil, nil)
+	}
+
+	return reply(ctx, protocol.Hover{
+		Contents: protocol.MarkupContent{
+			Kind:  protocol.Markdown,
+			Value: FormatHoverContent(header, body),
+		},
+		Range: posToRange(
+			int(params.Position.Line),
+			[]int{int(i.Pos()), int(i.End())},
+		),
+	}, nil)
 }
 
 // TODO: handle var doc
