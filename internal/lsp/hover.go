@@ -45,6 +45,7 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 	if !ok {
 		return reply(ctx, nil, nil)
 	}
+	info := pkg.TypeCheckResult.info
 
 	// Calculate offset and line
 	offset := file.PositionToOffset(params.Position)
@@ -65,7 +66,6 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 	if len(path) < 1 {
 		return reply(ctx, nil, nil)
 	}
-	info := pkg.TypeCheckResult.info
 
 	switch i := path[0].(type) {
 	case *ast.Ident:
@@ -302,22 +302,32 @@ func hoverLocalTypes(ctx context.Context, reply jsonrpc2.Replier, params protoco
 			break
 		}
 	}
-	if structure == nil {
-		return reply(ctx, nil, nil)
-	}
 	var header, body string
-	header = fmt.Sprintf("%s %s %s\n\n", mode, structure.Name, structure.String)
-
-	methods, ok := pkg.Methods.Get(typeName)
-	if ok {
-		body = "```gno\n"
-		for _, m := range methods {
-			if m.IsExported() {
-				body += fmt.Sprintf("%s\n", m.Signature)
+	if structure != nil {
+		header = fmt.Sprintf("%s %s %s\n\n", mode, structure.Name, structure.String)
+		methods, ok := pkg.Methods.Get(typeName)
+		if ok {
+			body = "```gno\n"
+			for _, m := range methods {
+				if m.IsExported() {
+					body += fmt.Sprintf("%s\n", m.Signature)
+				}
+			}
+			body += "```\n"
+			body += structure.Doc + "\n"
+		}
+	} else { // If not in structures, look into symbols
+		for _, s := range pkg.Symbols {
+			if s.Name == fmt.Sprintf("%s", typeName) {
+				header = fmt.Sprintf("%s %s", mode, s.Signature)
+				body = s.Doc
+				break
 			}
 		}
-		body += "```\n"
-		body += structure.Doc + "\n"
+	}
+
+	if header == "" {
+		reply(ctx, nil, nil)
 	}
 
 	return reply(ctx, protocol.Hover{
@@ -611,4 +621,3 @@ func pathEnclosingObjNode(f *ast.File, pos token.Pos) []ast.Node {
 func parseType(t, importpath string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(t, "*"), importpath+".")
 }
-
