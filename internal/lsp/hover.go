@@ -62,27 +62,28 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 	}
 
 	// Get path enclosing
-	path := pathEnclosingObjNode(pgf.File, token.Pos(offset))
-	if len(path) < 2 {
+	paths := pathEnclosingObjNode(pgf.File, token.Pos(offset))
+	if len(paths) < 2 {
 		return reply(ctx, nil, nil)
 	}
 
-	switch i := path[0].(type) {
+	switch n := paths[0].(type) {
 	case *ast.Ident:
 		_, tv := getTypeAndValue(
 			*pkg.TypeCheckResult.fset,
-			info, i.Name,
+			info, n.Name,
 			int(line),
 			offset,
 		)
 		if tv == nil || tv.Type == nil {
-			var body string
-			switch t := path[1].(type) {
+			switch t := paths[1].(type) {
 			case *ast.FuncDecl:
 				if t.Recv != nil {
-					return hoverMethodDecl(ctx, reply, params, pkg, i, t)
+					return hoverMethodDecl(ctx, reply, params, pkg, n, t)
 				}
-				return hoverFuncDecl(ctx, reply, params, pkg, i, t)
+				return hoverFuncDecl(ctx, reply, params, pkg, n)
+			case *ast.SelectorExpr:
+				return hoverSelectorExpr(ctx, s, reply, params, pgf, pkg, paths, n, t, int(line))
 			default:
 				return reply(ctx, nil, nil)
 			}
@@ -92,28 +93,169 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 		isPackageLevelGlobal := strings.Contains(typeStr, pkg.ImportPath) // better name
 
 		// Handle builtins
-		if doc, ok := isBuiltin(i, tv); ok {
-			return hoverBuiltinTypes(ctx, reply, params, i, tv, m, doc)
+		if doc, ok := isBuiltin(n, tv); ok {
+			return hoverBuiltinTypes(ctx, reply, params, n, tv, m, doc)
 		}
 
 		// local var
 		if (isPackageLevelGlobal || !strings.Contains(typeStr, "gno.land")) && m == "var" {
-			return hoverLocalVar(ctx, reply, params, pkg, i, tv, m, typeStr, isPackageLevelGlobal)
+			return hoverLocalVar(ctx, reply, params, pkg, n, tv, m, typeStr, isPackageLevelGlobal)
 		}
 
 		// local type
 		if isPackageLevelGlobal && m == "type" {
 			typeStr := parseType(typeStr, pkg.ImportPath)
-			return hoverPackageLevelTypes(ctx, reply, params, pkg, i, tv, m, typeStr)
+			return hoverPackageLevelTypes(ctx, reply, params, pkg, n, tv, m, typeStr)
 		}
 
 		// local global and is value
 		if m == "value" {
 			typeStr := parseType(typeStr, pkg.ImportPath)
-			return hoverPackageLevelValue(ctx, reply, params, pkg, i, tv, m, typeStr, isPackageLevelGlobal)
+			return hoverPackageLevelValue(ctx, reply, params, pkg, n, tv, m, typeStr, isPackageLevelGlobal)
 		}
 
-		header := fmt.Sprintf("%s %s %s", m, i.Name, typeStr)
+		// TODO: remove? handles var from imported packages
+		header := fmt.Sprintf("%s %s %s", m, n.Name, typeStr)
+		return reply(ctx, protocol.Hover{
+			Contents: protocol.MarkupContent{
+				Kind:  protocol.Markdown,
+				Value: FormatHoverContent(header, ""),
+			},
+			Range: posToRange(
+				int(params.Position.Line),
+				[]int{int(n.Pos()), int(n.End())},
+			),
+		}, nil)
+	default:
+		return reply(ctx, nil, nil)
+	}
+}
+
+func hoverSelectorExpr(ctx context.Context, s *server, reply jsonrpc2.Replier, params protocol.HoverParams, pgf *ParsedGnoFile, pkg *Package, paths []ast.Node, i *ast.Ident, sel *ast.SelectorExpr, line int) error {
+	exprStr := types.ExprString(sel)
+
+	parent := sel.X
+	parentStr := types.ExprString(parent)
+
+	_, tv := getTypeAndValueLight(
+		*pkg.TypeCheckResult.fset,
+		pkg.TypeCheckResult.info,
+		exprStr,
+		int(line),
+	)
+	if tv == nil || tv.Type == nil {
+		return reply(ctx, nil, nil)
+	}
+	tvStr := tv.Type.String()
+
+	_, tvParent := getTypeAndValueLight(
+		*pkg.TypeCheckResult.fset,
+		pkg.TypeCheckResult.info,
+		parentStr,
+		int(line),
+	)
+	if tvParent == nil { // can be import
+		for _, spec := range pgf.File.Imports {
+			path := spec.Path.Value[1 : len(spec.Path.Value)-1]
+			parts := strings.Split(path, "/")
+			last := parts[len(parts)-1]
+			if last == i.Name { // hover of pkg name
+				header := fmt.Sprintf("package %s (%s)", last, spec.Path.Value)
+				body := func() string {
+					if strings.HasPrefix(path, "gno.land/") {
+						return fmt.Sprintf("[```%s``` on gno.land](https://%s)", last, path)
+					}
+					return fmt.Sprintf("[```%s``` on gno.land](https://gno.land)", last)
+				}()
+				return reply(ctx, protocol.Hover{
+					Contents: protocol.MarkupContent{
+						Kind:  protocol.Markdown,
+						Value: FormatHoverContent(header, body),
+					},
+					Range: posToRange(
+						int(params.Position.Line),
+						[]int{int(i.Pos()), int(i.End())},
+					),
+				}, nil)
+			} else if last == parentStr { // hover on package symbol
+				symbol := s.completionStore.lookupSymbol(parentStr, i.Name)
+				if symbol == nil {
+					break
+				}
+
+				return reply(ctx, protocol.Hover{
+					Contents: protocol.MarkupContent{
+						Kind:  protocol.Markdown,
+						Value: symbol.String(),
+					},
+					Range: posToRange(
+						int(params.Position.Line),
+						[]int{int(i.Pos()), int(i.End())},
+					),
+				}, nil)
+			}
+		}
+		return reply(ctx, nil, nil)
+	}
+	tvParentStr := tvParent.Type.String()
+
+	if strings.Contains(tvStr, "func") {
+		if strings.Contains(tvParentStr, pkg.ImportPath) {
+			return hoverFuncDecl(ctx, reply, params, pkg, i)
+		}
+
+		for _, spec := range pgf.File.Imports {
+			path := spec.Path.Value[1 : len(spec.Path.Value)-1]
+			if strings.Contains(tvParentStr, path) { // hover of pkg name
+				symbol := s.completionStore.lookupSymbol(path, i.Name)
+				if symbol == nil {
+					// TODO: fix
+					// getting nil even when it is not supposed to be
+					break
+				}
+
+				return reply(ctx, protocol.Hover{
+					Contents: protocol.MarkupContent{
+						Kind:  protocol.Markdown,
+						Value: symbol.String(),
+					},
+					Range: posToRange(
+						int(params.Position.Line),
+						[]int{int(i.Pos()), int(i.End())},
+					),
+				}, nil)
+			}
+		}
+
+		// can be non gno.land import
+		// TODO: check if method has the same reciever
+		// TODO: better load the package and check Methods map
+		for _, spec := range pgf.File.Imports {
+			if strings.Contains(spec.Path.Value, "gno.land") {
+				continue
+			}
+			path := spec.Path.Value[1 : len(spec.Path.Value)-1]
+			symbol := s.completionStore.lookupSymbol(path, i.Name)
+			if symbol == nil {
+				continue
+			}
+			if symbol.Kind != "func" {
+				continue
+			}
+
+			return reply(ctx, protocol.Hover{
+				Contents: protocol.MarkupContent{
+					Kind:  protocol.Markdown,
+					Value: symbol.String(),
+				},
+				Range: posToRange(
+					int(params.Position.Line),
+					[]int{int(i.Pos()), int(i.End())},
+				),
+			}, nil)
+		}
+	} else {
+		header := fmt.Sprintf("%s %s %s", mode(*tv), i.Name, tvStr)
 		return reply(ctx, protocol.Hover{
 			Contents: protocol.MarkupContent{
 				Kind:  protocol.Markdown,
@@ -124,165 +266,6 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 				[]int{int(i.Pos()), int(i.End())},
 			),
 		}, nil)
-	default:
-		return reply(ctx, nil, nil)
-	}
-
-	expr := getExprAtLine(pgf, int(line))
-	if expr == nil {
-		return reply(ctx, nil, nil)
-	}
-	switch e := expr.(type) { // TODO: Remove duplicate code
-	case *ast.CallExpr:
-		slog.Info("hover - CALL_EXPR")
-		switch v := e.Fun.(type) {
-		case *ast.Ident:
-			// TODO: don't show methods
-			if offset < int(v.Pos()) && offset > int(v.End()) {
-				break
-			}
-			pkgPath := filepath.Dir(params.TextDocument.URI.Filename())
-			sym, ok := s.cache.lookupSymbol(pkgPath, v.Name)
-			if !ok {
-				return reply(ctx, nil, nil)
-			}
-			return reply(ctx, protocol.Hover{
-				Contents: protocol.MarkupContent{
-					Kind:  protocol.Markdown,
-					Value: sym.String(),
-				},
-				Range: posToRange(
-					int(params.Position.Line),
-					[]int{0, 4},
-				),
-			}, nil)
-		case *ast.SelectorExpr:
-			// case pkg.Func
-			i, ok := v.X.(*ast.Ident)
-			if !ok {
-				return reply(ctx, nil, nil)
-			}
-
-			if offset >= int(i.Pos())-1 && offset < int(i.End())-1 { // pkg or var
-				if i.Obj != nil { // var
-					return hoverVariableIdent(ctx, reply, pgf, params, i)
-				}
-				return hoverPackageIdent(ctx, reply, pgf, params, i)
-			} else if offset >= int(e.Pos())-1 && offset < int(e.End())-1 { // Func
-				symbol := s.completionStore.lookupSymbol(i.Name, v.Sel.Name)
-				if symbol != nil {
-					return reply(ctx, protocol.Hover{
-						Contents: protocol.MarkupContent{
-							Kind:  protocol.Markdown,
-							Value: symbol.String(),
-						},
-						Range: posToRange(
-							int(params.Position.Line),
-							[]int{int(e.Pos()), int(e.End())},
-						),
-					}, nil)
-				}
-			}
-		default:
-			return reply(ctx, nil, nil)
-		}
-		return reply(ctx, nil, nil)
-	case *ast.SelectorExpr:
-		slog.Info("hover - SELECTOR_EXPR")
-		// we have a format X.A
-		i, ok := e.X.(*ast.Ident)
-		if !ok {
-			return reply(ctx, nil, nil)
-		}
-		if i.Obj != nil { // its a var
-			return hoverVariableIdent(ctx, reply, pgf, params, i)
-		}
-		if offset >= int(i.Pos())-1 && offset < int(i.End())-1 { // X
-			return hoverPackageIdent(ctx, reply, pgf, params, i)
-		} else if offset >= int(e.Pos())-1 && offset < int(e.End())-1 { // A
-			symbol := s.completionStore.lookupSymbol(i.Name, e.Sel.Name)
-			if symbol != nil {
-				return reply(ctx, protocol.Hover{
-					Contents: protocol.MarkupContent{
-						Kind:  protocol.Markdown,
-						Value: symbol.String(),
-					},
-					Range: posToRange(
-						int(params.Position.Line),
-						[]int{int(e.Pos()), int(e.End())},
-					),
-				}, nil)
-			}
-		}
-		// slog.Info("SELECTOR_EXPR", "name", e.Sel.Name, "obj", e.Sel.String())
-	case *ast.FuncType:
-		var funcDecl *ast.FuncDecl
-		ast.Inspect(pgf.File, func(n ast.Node) bool {
-			if f, ok := n.(*ast.FuncDecl); ok && f.Type == e {
-				funcDecl = f
-				return false
-			}
-			return true
-		})
-		if funcDecl == nil {
-			return reply(ctx, nil, nil)
-		}
-		if funcDecl.Recv != nil {
-			// slog.Info("FUNC-TYPE", "pos", funcDecl.Recv.List[0].Type.Pos(), "end", funcDecl.Recv.List[0].Type.End())
-			if offset >= int(funcDecl.Recv.List[0].Type.Pos())-1 && offset < int(funcDecl.Recv.List[0].Type.End())-1 {
-				switch t := funcDecl.Recv.List[0].Type.(type) {
-				case *ast.StarExpr:
-					k := fmt.Sprintf("*%s", t.X)
-					var structure *Structure
-					for _, st := range pkg.Structures {
-						if st.Name == fmt.Sprintf("%s", t.X) {
-							structure = st
-							break
-						}
-					}
-					if structure == nil {
-						return reply(ctx, nil, nil)
-					}
-					var header, body string
-					header = fmt.Sprintf("type %s %s\n\n", structure.Name, structure.String)
-					methods, ok := pkg.Methods.Get(k)
-					if ok {
-						body = "```gno\n"
-						for _, m := range methods {
-							if m.IsExported() {
-								body += fmt.Sprintf("%s\n", m.Signature)
-							}
-						}
-						body += "```\n"
-						body += structure.Doc + "\n"
-					}
-					return reply(ctx, protocol.Hover{
-						Contents: protocol.MarkupContent{
-							Kind:  protocol.Markdown,
-							Value: FormatHoverContent(header, body),
-						},
-						Range: posToRange(
-							int(params.Position.Line),
-							[]int{int(t.Pos()), int(t.End())},
-						),
-					}, nil)
-				case *ast.Ident:
-					header := fmt.Sprintf("var %s", t.Name)
-					return reply(ctx, protocol.Hover{
-						Contents: protocol.MarkupContent{
-							Kind:  protocol.Markdown,
-							Value: FormatHoverContent(header, ""),
-						},
-						Range: posToRange(
-							int(params.Position.Line),
-							[]int{int(t.Pos()), int(t.End())},
-						),
-					}, nil)
-				}
-			}
-		}
-	default:
-		slog.Info("hover - NOT HANDLED")
 	}
 
 	return reply(ctx, nil, nil)
@@ -334,7 +317,7 @@ func hoverMethodDecl(ctx context.Context, reply jsonrpc2.Replier, params protoco
 }
 
 // TODO: handle var doc
-func hoverFuncDecl(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident, decl *ast.FuncDecl) error {
+func hoverFuncDecl(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident) error {
 	var header, body string
 	for _, s := range pkg.Symbols {
 		if s.Name == i.Name {

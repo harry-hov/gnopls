@@ -245,6 +245,34 @@ func getTypeAndValue(
 	return nil, nil
 }
 
+// Use getTypeAndValue instead
+// TODO: should be removed
+func getTypeAndValueLight(
+	fset token.FileSet,
+	info *types.Info,
+	tok string,
+	line int,
+) (ast.Expr, *types.TypeAndValue) {
+	for expr, tv := range info.Types {
+		if tok != types.ExprString(expr) {
+			continue
+		}
+		posn := fset.Position(expr.Pos())
+		if line != posn.Line {
+			continue
+		}
+
+		// tv.Value.
+		tvstr := tv.Type.String()
+		if tv.Value != nil {
+			tvstr += " = " + tv.Value.String()
+		}
+
+		return expr, &tv
+	}
+	return nil, nil
+}
+
 func mode(tv types.TypeAndValue) string {
 	switch {
 	case tv.IsVoid():

@@ -85,7 +85,7 @@ type Symbol struct {
 	Name      string
 	Doc       string
 	Signature string
-	Kind      string
+	Kind      string // should be enum
 }
 
 type Function struct {
