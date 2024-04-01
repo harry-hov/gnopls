@@ -114,8 +114,25 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 			return hoverPackageLevelValue(ctx, reply, params, pkg, n, tv, m, typeStr, isPackageLevelGlobal)
 		}
 
-		// TODO: remove? handles var from imported packages
-		header := fmt.Sprintf("%s %s %s", m, n.Name, typeStr)
+		// if var of type imported package
+		var header string
+		if strings.Contains(typeStr, "gno.land/") {
+			for _, spec := range pgf.File.Imports {
+				path := spec.Path.Value[1 : len(spec.Path.Value)-1]
+				if strings.Contains(typeStr, path) {
+					parts := strings.Split(path, "/")
+					last := parts[len(parts)-1]
+					t := strings.Replace(typeStr, path, last, 1)
+					header = fmt.Sprintf("%s %s %s", m, n.Name, t)
+					break
+				}
+			}
+		} else { // rest of the cases
+			header = fmt.Sprintf("%s %s %s", m, n.Name, typeStr)
+		}
+
+		// Handles rest of the cases
+		// TODO: improve?
 		return reply(ctx, protocol.Hover{
 			Contents: protocol.MarkupContent{
 				Kind:  protocol.Markdown,
