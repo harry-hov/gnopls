@@ -268,7 +268,7 @@ func definitionSelectorExpr(ctx context.Context, s *server, reply jsonrpc2.Repli
 
 func definitionMethodDecl(ctx context.Context, reply jsonrpc2.Replier, params protocol.DefinitionParams, pkg *Package, i *ast.Ident, decl *ast.FuncDecl) error {
 	if decl.Recv.NumFields() != 1 || decl.Recv.List[0].Type == nil {
-		reply(ctx, nil, nil)
+		return reply(ctx, nil, nil)
 	}
 
 	var key string
@@ -278,12 +278,12 @@ func definitionMethodDecl(ctx context.Context, reply jsonrpc2.Replier, params pr
 	case *ast.Ident:
 		key = fmt.Sprintf("%s", rt.Name)
 	default:
-		reply(ctx, nil, nil)
+		return reply(ctx, nil, nil)
 	}
 
 	methods, ok := pkg.Methods.Get(key)
 	if !ok {
-		reply(ctx, nil, nil)
+		return reply(ctx, nil, nil)
 	}
 
 	var fileUri uri.URI

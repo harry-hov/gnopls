@@ -288,7 +288,11 @@ func hoverSelectorExpr(ctx context.Context, s *server, reply jsonrpc2.Replier, p
 			}, nil)
 		}
 	} else {
-		header := fmt.Sprintf("%s %s %s", mode(*tv), i.Name, tvStr)
+		t := tvStr
+		if strings.Contains(tvStr, pkg.ImportPath) {
+			t = strings.Replace(tvStr, pkg.ImportPath+".", "", 1)
+		}
+		header := fmt.Sprintf("%s %s %s", mode(*tv), i.Name, t)
 		return reply(ctx, protocol.Hover{
 			Contents: protocol.MarkupContent{
 				Kind:  protocol.Markdown,
@@ -306,7 +310,7 @@ func hoverSelectorExpr(ctx context.Context, s *server, reply jsonrpc2.Replier, p
 
 func hoverMethodDecl(ctx context.Context, reply jsonrpc2.Replier, params protocol.HoverParams, pkg *Package, i *ast.Ident, decl *ast.FuncDecl) error {
 	if decl.Recv.NumFields() != 1 || decl.Recv.List[0].Type == nil {
-		reply(ctx, nil, nil)
+		return reply(ctx, nil, nil)
 	}
 
 	var key string
@@ -316,12 +320,12 @@ func hoverMethodDecl(ctx context.Context, reply jsonrpc2.Replier, params protoco
 	case *ast.Ident:
 		key = fmt.Sprintf("%s", rt.Name)
 	default:
-		reply(ctx, nil, nil)
+		return reply(ctx, nil, nil)
 	}
 
 	methods, ok := pkg.Methods.Get(key)
 	if !ok {
-		reply(ctx, nil, nil)
+		return reply(ctx, nil, nil)
 	}
 
 	var header, body string
@@ -457,7 +461,7 @@ func hoverPackageLevelTypes(ctx context.Context, reply jsonrpc2.Replier, params 
 	}
 
 	if header == "" {
-		reply(ctx, nil, nil)
+		return reply(ctx, nil, nil)
 	}
 
 	return reply(ctx, protocol.Hover{
