@@ -57,7 +57,6 @@ func (s *server) Definition(ctx context.Context, reply jsonrpc2.Replier, req jso
 			last := parts[len(parts)-1]
 			pkg := s.completionStore.lookupPkg(last)
 			if pkg == nil {
-				slog.Info("")
 				return reply(ctx, nil, nil)
 			}
 			if len(pkg.Symbols) < 1 {
@@ -261,6 +260,50 @@ func definitionSelectorExpr(ctx context.Context, s *server, reply jsonrpc2.Repli
 				),
 			}, nil)
 		}
+	} else {
+		var fileUri uri.URI
+		var pos token.Position
+		if strings.Contains(tvParentStr, pkg.ImportPath) {
+			typeName := parseType(tvParentStr, pkg.ImportPath)
+			for _, s := range pkg.Structures {
+				if typeName == s.Name {
+					fileUri = s.FileURI
+					pos = s.Position
+				}
+			}
+		} else {
+			for _, spec := range pgf.File.Imports {
+				path := spec.Path.Value[1 : len(spec.Path.Value)-1]
+				if !strings.Contains(tvParentStr, path) {
+					continue
+				}
+				parts := strings.Split(path, "/")
+				last := parts[len(parts)-1]
+				pkg := s.completionStore.lookupPkg(last)
+				if pkg == nil {
+					return reply(ctx, nil, nil)
+				}
+				typeName := parseType(tvParentStr, path)
+				for _, s := range pkg.Structures {
+					if typeName == s.Name {
+						fileUri = s.FileURI
+						pos = s.Position
+					}
+				}
+			}
+		}
+
+		if fileUri == "" {
+			return reply(ctx, nil, nil)
+		}
+
+		return reply(ctx, protocol.Location{
+			URI: fileUri,
+			Range: *posToRange(
+				int(pos.Line),
+				[]int{pos.Offset, pos.Offset},
+			),
+		}, nil)
 	}
 
 	return reply(ctx, nil, nil)
