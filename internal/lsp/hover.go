@@ -159,7 +159,7 @@ func hoverSelectorExpr(ctx context.Context, s *server, reply jsonrpc2.Replier, p
 			path := spec.Path.Value[1 : len(spec.Path.Value)-1]
 			parts := strings.Split(path, "/")
 			last := parts[len(parts)-1]
-			if last == i.Name { // hover of pkg name
+			if last == i.Name { // hover on pkg name
 				header := fmt.Sprintf("package %s (%s)", last, spec.Path.Value)
 				body := func() string {
 					if strings.HasPrefix(path, "gno.land/") {
@@ -206,18 +206,34 @@ func hoverSelectorExpr(ctx context.Context, s *server, reply jsonrpc2.Replier, p
 
 		for _, spec := range pgf.File.Imports {
 			path := spec.Path.Value[1 : len(spec.Path.Value)-1]
-			if strings.Contains(tvParentStr, path) { // hover of pkg name
-				symbol := s.completionStore.lookupSymbol(path, i.Name)
-				if symbol == nil {
-					// TODO: fix
-					// getting nil even when it is not supposed to be
+			if strings.Contains(tvParentStr, path) { // hover on parent var of kind import
+				parts := strings.Split(path, "/")
+				last := parts[len(parts)-1]
+				pkg := s.completionStore.lookupPkg(last)
+				if pkg == nil {
+					break
+				}
+				tvParentStrParts := strings.Split(tvParentStr, ".")
+				parentType := tvParentStrParts[len(tvParentStrParts)-1]
+				methods, ok := pkg.Methods.Get(parentType)
+				if !ok {
+					break
+				}
+				var header, body string
+				for _, m := range methods {
+					if m.Name == i.Name {
+						header = m.Signature
+						body = m.Doc
+					}
+				}
+				if header == "" {
 					break
 				}
 
 				return reply(ctx, protocol.Hover{
 					Contents: protocol.MarkupContent{
 						Kind:  protocol.Markdown,
-						Value: symbol.String(),
+						Value: FormatHoverContent(header, body),
 					},
 					Range: posToRange(
 						int(params.Position.Line),

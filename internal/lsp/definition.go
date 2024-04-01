@@ -197,15 +197,31 @@ func definitionSelectorExpr(ctx context.Context, s *server, reply jsonrpc2.Repli
 
 		for _, spec := range pgf.File.Imports {
 			path := spec.Path.Value[1 : len(spec.Path.Value)-1]
-			if strings.Contains(tvParentStr, path) { // of pkg name
-				symbol := s.completionStore.lookupSymbol(path, i.Name)
-				if symbol == nil {
-					// TODO: fix
-					// getting nil even when it is not supposed to be
+			if strings.Contains(tvParentStr, path) { // hover on parent var of kind import
+				parts := strings.Split(path, "/")
+				last := parts[len(parts)-1]
+				pkg := s.completionStore.lookupPkg(last)
+				if pkg == nil {
 					break
 				}
-				fileUri := symbol.FileURI
-				pos := symbol.Position
+				tvParentStrParts := strings.Split(tvParentStr, ".")
+				parentType := tvParentStrParts[len(tvParentStrParts)-1]
+				methods, ok := pkg.Methods.Get(parentType)
+				if !ok {
+					break
+				}
+				var fileUri uri.URI
+				var pos token.Position
+				for _, m := range methods {
+					if m.Name == i.Name {
+						fileUri = m.FileURI
+						pos = m.Position
+					}
+				}
+
+				if fileUri == "" {
+					break
+				}
 
 				return reply(ctx, protocol.Location{
 					URI: fileUri,
@@ -215,6 +231,7 @@ func definitionSelectorExpr(ctx context.Context, s *server, reply jsonrpc2.Repli
 					),
 				}, nil)
 			}
+
 		}
 
 		// can be non gno.land import
