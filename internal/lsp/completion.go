@@ -9,6 +9,7 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
+	"golang.org/x/tools/go/ast/astutil"
 )
 
 type CompletionStore struct {
@@ -141,6 +143,13 @@ func (s Symbol) String() string {
 	return fmt.Sprintf("```gno\n%s\n```\n\n%s", s.Signature, s.Doc)
 }
 
+// Code that returns completion items
+// TODO: Move completion store populating logic (rest of the code)
+// to better place.
+//
+// ------------------------------------------------------
+// Start
+
 func (s *server) Completion(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2.Request) error {
 	var params protocol.CompletionParams
 	if err := json.Unmarshal(req.Params(), &params); err != nil {
@@ -148,44 +157,225 @@ func (s *server) Completion(ctx context.Context, reply jsonrpc2.Replier, req jso
 	}
 
 	uri := params.TextDocument.URI
+
+	// Get snapshot of the current file
 	file, ok := s.snapshot.Get(uri.Filename())
 	if !ok {
 		return reply(ctx, nil, errors.New("snapshot not found"))
 	}
-
-	items := []protocol.CompletionItem{}
-
-	token, err := file.TokenAt(params.Position)
+	// Try parsing current file
+	pgf, err := file.ParseGno(ctx)
 	if err != nil {
-		return reply(ctx, nil, err)
+		return reply(ctx, nil, errors.New("cannot parse gno file"))
 	}
-	text := strings.TrimSuffix(strings.TrimSpace(token.Text), ".")
-	slog.Info("completion", "text", text)
 
-	// TODO:
-	// pgf, err := file.ParseGno(ctx)
-	// path, e := astutil.PathEnclosingInterval(pgf.File, 13, 8)
+	// Calculate offset and line
+	offset := file.PositionToOffset(params.Position)
+	line := params.Position.Line + 1 // starts at 0, so adding 1
 
-	pkg := s.completionStore.lookupPkg(text)
-	if pkg != nil {
-		for _, s := range pkg.Symbols {
-			items = append(items, protocol.CompletionItem{
-				Label: s.Name,
-				InsertText: func() string {
-					if s.Kind == "func" {
-						return s.Name + "()"
-					}
-					return s.Name
-				}(),
-				Kind:          symbolToKind(s.Kind),
-				Detail:        s.Signature,
-				Documentation: s.Doc,
-			})
+	// Don't show completion items for imports
+	for _, spec := range pgf.File.Imports {
+		if spec.Path.Pos() <= token.Pos(offset) && token.Pos(offset) <= spec.Path.End() {
+			return reply(ctx, nil, nil)
 		}
 	}
 
-	return reply(ctx, items, err)
+	// Load pkg from cache
+	pkg, ok := s.cache.pkgs.Get(filepath.Dir(string(uri.Filename())))
+	if !ok {
+		return reply(ctx, nil, nil)
+	}
+
+	// Completion is based on what precedes the cursor.
+	// Find the path to the position before pos.
+	paths, _ := astutil.PathEnclosingInterval(pgf.File, token.Pos(offset-1), token.Pos(offset-1))
+	if paths == nil {
+		return reply(ctx, nil, nil)
+	}
+
+	switch n := paths[0].(type) {
+	case *ast.Ident:
+		_, tv := getTypeAndValue(
+			*pgf.Fset,
+			pkg.TypeCheckResult.info, n.Name,
+			int(line),
+			offset,
+		)
+		if tv == nil || tv.Type == nil {
+			return completionPackageIdent(ctx, s, reply, params, pgf, n, true)
+		}
+
+		typeStr := tv.Type.String()
+		if typeStr == "invalid type" {
+			return completionPackageIdent(ctx, s, reply, params, pgf, n, false)
+		}
+
+		m := mode(*tv)
+		if m != "var" {
+			return reply(ctx, nil, nil)
+		}
+
+		if strings.Contains(typeStr, pkg.ImportPath) { // local
+			t := parseType(typeStr, pkg.ImportPath)
+			methods, ok := pkg.Methods.Get(t)
+			if !ok {
+				return reply(ctx, nil, nil)
+			}
+			items := []protocol.CompletionItem{}
+			for _, m := range methods {
+				items = append(items, protocol.CompletionItem{
+					Label:         m.Name,
+					InsertText:    m.Name + "()",
+					Kind:          protocol.CompletionItemKindFunction,
+					Detail:        m.Signature,
+					Documentation: m.Doc,
+				})
+			}
+			return reply(ctx, items, nil)
+		}
+		// check imports
+		for _, spec := range pgf.File.Imports {
+			path := spec.Path.Value[1 : len(spec.Path.Value)-1]
+			if strings.Contains(typeStr, path) {
+				parts := strings.Split(path, "/")
+				last := parts[len(parts)-1]
+				pkg := s.completionStore.lookupPkg(last)
+				if pkg == nil {
+					break
+				}
+				t := parseType(typeStr, path)
+				slog.Info(t)
+				methods, ok := pkg.Methods.Get(t)
+				if !ok {
+					break
+				}
+				items := []protocol.CompletionItem{}
+				for _, m := range methods {
+					items = append(items, protocol.CompletionItem{
+						Label:         m.Name,
+						InsertText:    m.Name + "()",
+						Kind:          protocol.CompletionItemKindFunction,
+						Detail:        m.Signature,
+						Documentation: m.Doc,
+					})
+				}
+				return reply(ctx, items, nil)
+			}
+		}
+		return reply(ctx, nil, nil)
+	case *ast.CallExpr:
+		_, tv := getTypeAndValue(
+			*pgf.Fset,
+			pkg.TypeCheckResult.info, types.ExprString(n),
+			int(line),
+			offset,
+		)
+		if tv == nil || tv.Type == nil {
+			return reply(ctx, nil, nil)
+		}
+		typeStr := tv.Type.String()
+		slog.Info(typeStr)
+		if strings.Contains(typeStr, pkg.ImportPath) { // local
+			t := parseType(typeStr, pkg.ImportPath)
+			methods, ok := pkg.Methods.Get(t)
+			if !ok {
+				return reply(ctx, nil, nil)
+			}
+			items := []protocol.CompletionItem{}
+			for _, m := range methods {
+				items = append(items, protocol.CompletionItem{
+					Label:         m.Name,
+					InsertText:    m.Name + "()",
+					Kind:          protocol.CompletionItemKindFunction,
+					Detail:        m.Signature,
+					Documentation: m.Doc,
+				})
+			}
+			return reply(ctx, items, nil)
+		}
+		// check imports
+		for _, spec := range pgf.File.Imports {
+			path := spec.Path.Value[1 : len(spec.Path.Value)-1]
+			if strings.Contains(typeStr, path) {
+				parts := strings.Split(path, "/")
+				last := parts[len(parts)-1]
+				pkg := s.completionStore.lookupPkg(last)
+				if pkg == nil {
+					break
+				}
+				t := parseType(typeStr, path)
+				slog.Info(t)
+				methods, ok := pkg.Methods.Get(t)
+				if !ok {
+					break
+				}
+				items := []protocol.CompletionItem{}
+				for _, m := range methods {
+					items = append(items, protocol.CompletionItem{
+						Label:         m.Name,
+						InsertText:    m.Name + "()",
+						Kind:          protocol.CompletionItemKindFunction,
+						Detail:        m.Signature,
+						Documentation: m.Doc,
+					})
+				}
+				return reply(ctx, items, nil)
+			}
+		}
+		return reply(ctx, nil, nil)
+	default:
+		return reply(ctx, nil, nil)
+	}
 }
+
+func completionPackageIdent(ctx context.Context, s *server, reply jsonrpc2.Replier, params protocol.CompletionParams, pgf *ParsedGnoFile, i *ast.Ident, includeFuncs bool) error {
+	for _, spec := range pgf.File.Imports {
+		path := spec.Path.Value[1 : len(spec.Path.Value)-1]
+		parts := strings.Split(path, "/")
+		last := parts[len(parts)-1]
+		if last == i.Name {
+			pkg := s.completionStore.lookupPkg(last)
+			if pkg != nil {
+				items := []protocol.CompletionItem{}
+				if includeFuncs {
+					for _, f := range pkg.Functions {
+						if !f.IsExported() {
+							continue
+						}
+						items = append(items, protocol.CompletionItem{
+							Label:         f.Name,
+							InsertText:    f.Name + "()",
+							Kind:          protocol.CompletionItemKindFunction,
+							Detail:        f.Signature,
+							Documentation: f.Doc,
+						})
+					}
+				}
+				for _, s := range pkg.Symbols {
+					if s.Kind == "func" {
+						continue
+					}
+					if !unicode.IsUpper(rune(s.Name[0])) {
+						continue
+					}
+					items = append(items, protocol.CompletionItem{
+						Label:         s.Name,
+						InsertText:    s.Name,
+						Kind:          symbolToKind(s.Kind),
+						Detail:        s.Signature,
+						Documentation: s.Doc,
+					})
+				}
+				return reply(ctx, items, nil)
+			}
+		}
+	}
+
+	return reply(ctx, nil, nil)
+}
+
+// End
+// ------------------------------------------------------
 
 func InitCompletionStore(dirs []string) *CompletionStore {
 	pkgs := []*Package{}
@@ -302,6 +492,17 @@ func PackageFromDir(path string, onlyExports bool) (*Package, error) {
 							}
 						}
 					}
+				} else { // func
+					f := &Function{
+						Position:  fset.Position(t.Pos()),
+						FileURI:   getURI(absPath),
+						Name:      t.Name.Name,
+						Arguments: []*Field{}, // TODO: fill args
+						Doc:       t.Doc.Text(),
+						Signature: strings.Split(text[t.Pos()-1:t.End()-1], " {")[0], // TODO: use ast
+						Kind:      "func",
+					}
+					functions = append(functions, f)
 				}
 				symbol = function(n, text)
 			case *ast.GenDecl:
