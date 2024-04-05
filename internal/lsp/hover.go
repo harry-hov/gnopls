@@ -85,7 +85,16 @@ func (s *server) Hover(ctx context.Context, reply jsonrpc2.Replier, req jsonrpc2
 			case *ast.SelectorExpr:
 				return hoverSelectorExpr(ctx, s, reply, params, pgf, pkg, paths, n, t, int(line))
 			default:
-				return reply(ctx, nil, nil)
+				return reply(ctx, protocol.Hover{
+					Contents: protocol.MarkupContent{
+						Kind:  protocol.Markdown,
+						Value: FormatHoverContent(n.Name, ""),
+					},
+					Range: posToRange(
+						int(params.Position.Line),
+						[]int{int(n.Pos()), int(n.End())},
+					),
+				}, nil)
 			}
 		}
 		typeStr := tv.Type.String()
