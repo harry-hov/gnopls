@@ -244,7 +244,6 @@ func (s *server) Completion(ctx context.Context, reply jsonrpc2.Replier, req jso
 					break
 				}
 				t := parseType(typeStr, path)
-				slog.Info(t)
 				methods, ok := pkg.Methods.Get(t)
 				if !ok {
 					break
@@ -304,7 +303,6 @@ func (s *server) Completion(ctx context.Context, reply jsonrpc2.Replier, req jso
 					break
 				}
 				t := parseType(typeStr, path)
-				slog.Info(t)
 				methods, ok := pkg.Methods.Get(t)
 				if !ok {
 					break
