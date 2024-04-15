@@ -1,5 +1,7 @@
 # `gnopls`, the Gno language server
 
+![Build & Test](https://github.com/harry-hov/gnopls/actions/workflows/go.yml/badge.svg)
+
 `gnopls` (pronounced "Gno please") is the unofficial Gno [language server]. It provides IDE features to any [LSP]-compatible editor.
 
 ## Installation
