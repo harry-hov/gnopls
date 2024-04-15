@@ -164,7 +164,7 @@ func (s *server) Completion(ctx context.Context, reply jsonrpc2.Replier, req jso
 		return reply(ctx, nil, errors.New("snapshot not found"))
 	}
 	// Try parsing current file
-	pgf, err := file.ParseGno(ctx)
+	pgf, err := file.ParseGno2(ctx)
 	if err != nil {
 		return reply(ctx, nil, errors.New("cannot parse gno file"))
 	}
@@ -180,16 +180,19 @@ func (s *server) Completion(ctx context.Context, reply jsonrpc2.Replier, req jso
 		}
 	}
 
-	// Load pkg from cache
-	pkg, ok := s.cache.pkgs.Get(filepath.Dir(string(uri.Filename())))
-	if !ok {
-		return reply(ctx, nil, nil)
-	}
-
 	// Completion is based on what precedes the cursor.
 	// Find the path to the position before pos.
 	paths, _ := astutil.PathEnclosingInterval(pgf.File, token.Pos(offset-1), token.Pos(offset-1))
 	if paths == nil {
+		return reply(ctx, nil, nil)
+	}
+
+	// Debug
+	// slog.Info("COMPLETION", "token", fmt.Sprintf("%s", paths[0]))
+
+	// Load pkg from cache
+	pkg, ok := s.cache.pkgs.Get(filepath.Dir(string(uri.Filename())))
+	if !ok {
 		return reply(ctx, nil, nil)
 	}
 

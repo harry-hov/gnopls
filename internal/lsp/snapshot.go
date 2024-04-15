@@ -46,9 +46,31 @@ type ParsedGnoFile struct {
 	Src []byte
 }
 
+// ParseGno reads src from disk and parse it
 func (f *GnoFile) ParseGno(ctx context.Context) (*ParsedGnoFile, error) {
 	fset := token.NewFileSet()
 	ast, err := parser.ParseFile(fset, f.URI.Filename(), nil, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+
+	pgf := &ParsedGnoFile{
+		URI: f.URI,
+
+		File: ast,
+		Fset: fset,
+		Src:  f.Src,
+	}
+
+	return pgf, nil
+}
+
+// ParseGno2 parses src from GnoFile instead of reading from disk
+// Right now it's only used in `completion.go`
+// TODO: Replace content of `ParseGno` with `ParseGno2`
+func (f *GnoFile) ParseGno2(ctx context.Context) (*ParsedGnoFile, error) {
+	fset := token.NewFileSet()
+	ast, err := parser.ParseFile(fset, f.URI.Filename(), f.Src, parser.ParseComments)
 	if err != nil {
 		return nil, err
 	}
