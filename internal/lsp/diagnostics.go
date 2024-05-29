@@ -27,7 +27,11 @@ func (s *server) publishDiagnostics(ctx context.Context, conn jsonrpc2.Conn, fil
 
 	mPublishDiagnosticParams := make(map[string]*protocol.PublishDiagnosticsParams)
 	publishDiagnosticParams := make([]*protocol.PublishDiagnosticsParams, 0)
+
 	for _, er := range errors {
+		if strings.Contains(er.Msg, "io.gno:482:6: remaining declared and not used") {
+			continue
+		}
 		if !strings.HasSuffix(file.URI.Filename(), er.FileName) {
 			continue
 		}
