@@ -1,3 +1,5 @@
+*Note: `harry-hov/gnopls` is now [`gnolang/gnopls`](https://github.com/gnolang/gnopls)
+
 # `gnopls`, the Gno language server
 
 ![Build & Test](https://github.com/harry-hov/gnopls/actions/workflows/go.yml/badge.svg)
